@@ -1,0 +1,374 @@
+.\"                                      Hey, EMACS: -*- nroff -*-
+.\" First parameter, NAME, should be all caps
+.\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
+.\" other parameters are allowed: see man(7), man(1)
+.Dd $Mdocdate: Aug 22 2010 $
+.\" Please adjust this date whenever revising the manpage.
+.Dt PIMD 8 SMM
+.Os
+.Sh NAME
+.Nm pimd
+.Nd PIM-SM v2 dynamic multicast routing daemon
+.Sh SYNOPSIS
+.Nm pimd
+.Op Fl fhlNqr
+.Op Fl c Ar FILE
+.Op Fl d Op Ar [LEVEL[,LEVEL,...]
+.Sh DESCRIPTION
+.Nm
+is a lightweight stand-alone PIM-SM v2 multicast routing daemon.  This is the
+original USC (netweb/catarina) implementation of the protocol, which nowadays is
+fully free to use under the 3-clause BSD license.
+.Pp
+Protocol Independent Multicast - Sparse Mode (PIM-SM):
+.Bl -bullet -compact
+.It
+maintains the traditional IP multicast service model of receiver-initiated membership;
+.It
+uses explicit joins that propagate hop-by-hop from members' directly connected
+routers toward the distribution tree.
+.It
+builds a shared multicast distribution tree centered at a Rendezvous Point, and then
+builds source-specific trees for those sources whose data traffic warrants it.
+.It
+is not dependent on a specific unicast routing protocol; and
+.It
+uses soft-state mechanisms to adapt to underlying network conditions and group
+dynamics.
+.El
+.Pp
+The robustness, flexibility, and scaling properties of this architecture make it well
+suited to large heterogeneous internetworks.
+.Pp
+.Nm
+implements RFC 2362, which has been obsoleted by RFC 4601.  Please see the TODO file
+for more information on this.
+.Sh OPTIONS
+This program follows the usual UNIX command line syntax, with long options starting
+with two dashes (`-').  The options are as follows:
+.Bl -tag -width Ds
+.It Fl h, -help
+Print a help message and exit.
+.It Fl c, -config=FILE
+Specify an alternative configuration file, instead of the default
+.Pa /etc/pimd.conf .
+.It Fl d, -debug[=LEVEL[,LEVEL...]
+By default,
+.Nm
+detaches from the invoking terminal.
+If this option is specified,
+.Nm
+it runs in foreground of the starting terminal and responds to signals.
+If
+.Fl d
+is given with no argument, the debug level defaults to
+.Nm igmp, cache, interface, groups, prunes, routes and peers .
+.sp
+Regardless of the debug level,
+.Nm
+always writes warning and error messages to the system log daemon.
+Debug levels have the following effects:
+.Pp
+.Bl -tag -width TERM -compact -offset indent
+.It Cm packet
+Debug inbound/outbout packets
+.It Cm prunes
+Pruning operations, or pruned routes
+.It Cm routes
+Routing messages
+.It Cm rtdetail
+Detailed routing information
+.It Cm peers
+Neighbor gossip
+.It Cm cache
+Debug routing cache
+.It Cm timeout
+Debug timeouts
+.It Cm interface
+Show interface, or vif, debug messages
+.It Cm groups
+Debug group memberships
+.It Cm mtrace
+Multicast traceroute information
+.It Cm igmp
+Debug IGMP messages
+.It Cm icmp
+Debug ICMP messages
+.It Cm rsrr
+Debug RSRR messages
+.It Cm pim
+All PIM messages
+.It Cm pim_routes
+PIM routing messages
+.It Cm pim_bsr
+PIM bootstrap router messages
+.It Cm pim_detail
+Detailed PIM debug
+.It Cm pim_hello
+Debug hello messages to/from neighbors
+.El
+.It Fl f, -foreground
+Run in foreground, do not detach from calling terminal
+.It Fl l, -reload-config
+Tell a running pimd to reload its configuration.  This is done by sending
+a SIGHUP to the PID listed in
+.Pa /var/run/pimd.pid .
+.It Fl N, -disable-vifs
+This prevents
+.Nm
+from being activated on all interfaces by default.  Use `phyint enable` to selectively
+activate it.
+.It Fl q, -quit-daemon
+Tell a running pimd to quit.  Similar to --reload-config but this command sends SIGTERM.
+.It Fl r, -show-routes
+Show state of VIFs and multicast routing tables. This is command sends SIGUSR1 to a
+running pimd, similar to --reload-config.
+.It Fl v, -version
+Show
+.Nm
+version
+.El
+.Sh CONFIGURATION
+The configuration is kept in the file
+.Pa /etc/pimd.conf .
+The file format is free-form: whitespace (including newlines) is not
+significant.  There are eight different types of configuration commands:
+.Bl -item -offset indent
+.It
+.Cm default_source_preference
+.Ar <preference>
+.It
+.Cm default_source_metric
+.Ar <metric>
+.It
+.Cm phyint
+.Ar <local-addr Ns | Ns ifname>
+.Oo
+.Cm disable Ns | Ns Cm enable
+.Oc
+.br
+.Oo
+.Cm altnet
+.Ar <network> Cm masklen Ar <masklen>
+.Oc
+.br
+.Oo
+.Cm scoped
+.Ar <network> Cm masklen Ar <masklen>
+.Oc
+.br
+.Op Cm threshold Ar thr
+.Op Cm preference Ar pref
+.Op Cm metric Ar cost
+.It
+.Cm cand_rp
+.Op <local-addr>
+.Op Cm priority Ar <number>
+.Op Cm time Ar <number>
+.It
+.Cm cand_bootstrap_router
+.Op <local-addr>
+.Op Cm priority Ar <number>
+.It
+.Cm rp_address
+.Ar <rp-addr> [<group-addr> [masklen <masklen] [priority <number>]]
+.It
+.Cm group_prefix
+.Ar <group-addr>
+.Op Cm masklen Ar <masklen>
+.Op Cm priority Ar <number>
+.It
+.Cm switch_data_threshold
+.Op Cm rate Ar <number> Cm interval Ar <number>
+.It
+.Cm switch_register_threshold
+.Op Cm rate Ar <number> Cm interval Ar <number>
+.El
+.Pp
+By default,
+.Nm
+will be activated on all multicast capable interfaces.  The
+.Cm phyint
+setting and the
+.Fl N
+command line option control this behaviour.  More on
+.Cm phyint
+below.
+.Pp
+The
+.Cm default_source_preference
+option is used by assert elections to determine upstream routers.  Currently
+pimd cannot reliably obtain preferences and metrics from the unicast routing
+protocols, so a default preference may be configured.  In an assert election,
+the router advertising the lowest assert preference will be selected as the
+forwarder and upstream router for the LAN.  Setting 101 should be sufficiently
+high so that asserts from Cisco or GateD routers are prefered over poor-little
+pimd.
+.Pp
+It is reccommended that preferences be set such that metrics are never
+consulted.  However, default metrics may also be set using the
+.Cm default_source_metric
+option.  This item sets the cost for sending data through this router.  You
+want only PIM-SM data to go to this daemon; so once again, a high value is
+recommended to prevent accidental usage.  The preferred default value is 1024.
+.Pp
+The
+.Nm phyint
+option refers to a physical interface and must come after
+.Cm default_source_metric .
+Select the interface either by its IP address
+.Ar local-addr
+or interface name
+.Ar ifname
+(e.g. le0).  If you just want to activate this interface with default values,
+you don't need to put anything else on the line.  However, there are some 
+additional settings:
+.Bl -bullet -compact
+.It
+.Nm disable .
+Do not send PIM-SM traffic through this interface nor listen for PIM-SM traffic
+from this interface.  Default: enable.
+.Nm enable .
+Selectively enable which interfaces to send PIM-SM traffic through.  Useful with
+the
+.Fl N
+command line option.
+.It
+.Nm preference pref .
+This interface's value in an election. It will have the
+.Nm
+default_source_preference
+if not assigned.
+.It
+.Nm metric cost .
+The cost of sending data through this interface. It will have the
+.Nm default_source_metric
+if not assigned.
+.El
+.Pp
+Add one
+.Nm phyint
+line per interface on this router.  If you don't do this,
+.Nm pimd
+will either be completely silent (if you provide the
+.Fl N
+command line option), or simply assume that you want it to utilize all interfaces
+using default settings.
+.Pp
+The
+.Nm cand_rp
+setting refers to Candidate Rendez-vous Point (CRP).  It specifies which
+interface on this machine should be included in RP elections.
+.Bl -bullet -compact
+.It
+.Nm local-addr .
+The default is the highest active IP address.
+.It
+.Nm time number .
+The number of seconds to wait between advertising this CRP. The default value
+is 60 seconds.
+.It
+.Nm priority number .
+How important this CRP is compared to others. The lower the value here, the
+more important the CRP.
+.El
+.Pp
+The
+.Nm cand_bootstrap_router
+setting is similar to CRP.  Only difference is the lack of a 
+.Nm time
+option.
+.Pp
+The
+.Nm group_prefix
+statement outlines the set of multicast addresses that the CRP, if it wins an
+election, will advertise to other routers.
+.Bl -bullet -compact
+.It
+.Nm group-addr .
+A specific multicast group or network range this router will handle.
+.It
+.Nm masklen len .
+The number of IP address segments taken up by the netmask. Remember that a
+multicast address is a Class D and has a netmask of 240.0.0.0, which means its
+length is 4.
+.El
+.Pp
+Max
+.Nm group_prefix
+multicast addresses supported in pimd is 255.
+.Pp
+The
+.Nm rp_address
+setting is for static Rendez-vous Point configurations.  The argument can either
+be a unicast address or a multicast group, with an optional group address,
+mask length, and priority arguments.
+.Pp
+The 
+.Nm switch_data_threshold
+setting defines the threshold at which transmission rates trigger the
+changeover from the shared tree to the RP tree; starting the line with
+.Nm switch_register_threshold
+does the opposite in the same format.  Regardless of which of these you choose,
+the rate option is for transmission rate in bits per second, interval is the
+sample rate in seconds -- with a recommended minimum of five seconds.  It is
+recommended to have the same interval if both settings are used.
+.Sh SIGNALS
+.Nm
+responds to the following signals:
+.Pp
+.Bl -tag -width TERM -compact
+.It HUP
+Restarts
+.Nm .
+The configuration file is reread every time this signal is evoked.
+.It TERM
+Terminates execution gracefully (i.e. by sending good-bye messages to all neighboring
+routers).
+.It INT
+The same as TERM.
+.It USR1
+Dumps the internal state of VIFs and multicast routing tables to
+.Pa /var/run/pimd/pimd.dump .
+See also the --show-routes option above.
+.\" Not implemented yet, still TODO
+.\" .It USR2
+.\" Dumps the internal cache tables to
+.\" .Pa /var/run/pimd/pimd.cache .
+.\" Also not implemented yet, TODO
+.\" .It QUIT
+.\" Dumps the internal routing tables to stderr (only if
+.\" .Nm
+.\" was invoked with a non-zero debug level).
+.El
+.Pp
+For convenience in sending signals,
+.Nm
+writes its process ID to
+.Pa /var/run/pimd.pid
+upon startup.
+.Sh FILES
+.Bl -tag -width /var/run/pimd/pimd.cache -compact
+.It Pa /etc/pimd.conf
+.\" .It Pa /var/run/pimd/pimd.cache
+.It Pa /var/run/pimd/pimd.dump
+.It Pa /var/run/pimd.pid
+.El
+.Sh SEE ALSO
+.Xr mrouted 8 ,
+.Xr smcroute 8 ,
+.Xr /usr/share/doc/pimd/
+.Pp
+PIM-SM is described in, the now obsolete RFC 2362, and the current RFC 4601, with
+additions in RFC 5059 and RFC 5796.
+.Pp
+The pages at USC, http://netweb.usc.edu/pim/, are unfortunately no longer available.
+The wiki pages at http://github.com/troglobit/pimd/, the new GitHub project, are an
+attempt to gather as much info as possible.
+.Sh AUTHORS
+.Nm
+was written by Ahmed Helmy, George Edmond "Rusty" Eddy, and Pavlin Ivanov
+Radoslavov.  With contributions by many others.
+.Pp
+This manual page was initially written by Antonín Král for the Debian GNU/Linux
+system, and then updated by Joachim Nilsson for the GitHub pimd project.
