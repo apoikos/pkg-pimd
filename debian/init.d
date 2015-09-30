@@ -1,48 +1,26 @@
-#! /bin/sh
+#!/bin/sh
+# kFreeBSD do not accept scripts as interpreters, using #!/bin/sh and sourcing.
+if [ true != "$INIT_D_SCRIPT_SOURCED" ] ; then
+    set "$0" "$@"; INIT_D_SCRIPT_SOURCED=true . /lib/init/init-d-script
+fi
+
 ### BEGIN INIT INFO
 # Provides:          pimd
 # Required-Start:    $remote_fs $syslog
 # Required-Stop:     $remote_fs $syslog
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
+# Short-Description: PIM-SM/SSM multicast routing daemon
+# Description:       Lightweight, stand-alone PIM-SM/SSM multicast routing daemon
 ### END INIT INFO
 
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-DAEMON=/usr/sbin/pimd
 NAME=pimd
-DESC=pimd
+DAEMON=/usr/sbin/pimd
+PIDFILE="/var/run/${NAME}.pid"
 
-test -x $DAEMON || exit 0
-
-set -e
-
-case "$1" in
-  start)
-	echo -n "Starting $DESC: "
-	start-stop-daemon --start --quiet --pidfile /var/run/$NAME.pid \
-		--exec $DAEMON
-	echo "$NAME."
-	;;
-  stop)
-	echo -n "Stopping $DESC: "
-	start-stop-daemon --stop --quiet --oknodo --pidfile /var/run/$NAME.pid \
-		--exec $DAEMON
-	echo "$NAME."
-	;;
-  restart|force-reload)
-	echo -n "Restarting $DESC: "
-	start-stop-daemon --stop --quiet --pidfile \
-		/var/run/$NAME.pid --exec $DAEMON
-	sleep 1
-	start-stop-daemon --start --quiet --pidfile \
-		/var/run/$NAME.pid --exec $DAEMON
-	echo "$NAME."
-	;;
-  *)
-	N=/etc/init.d/$NAME
-	echo "Usage: $N {start|stop|restart|force-reload}" >&2
-	exit 1
-	;;
-esac
-
-exit 0
+do_reload() {
+        log_daemon_msg "Reloading $DESC configuration files" "$NAME"
+        start-stop-daemon --oknodo --stop --signal HUP --quiet \
+          --pidfile "$PIDFILE" --exec "$DAEMON"
+        log_end_msg $?
+}
