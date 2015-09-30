@@ -37,7 +37,6 @@
  *
  */
 
-#ifndef __linux__	/* XXX: netlink.c is for Linux; both files will merge in the future */
 #include <sys/param.h>
 #include <sys/file.h>
 #include "defs.h"
@@ -50,6 +49,10 @@
 #include <netdb.h>
 #include <stdlib.h>
 
+/* All the BSDs have routing sockets (not Netlink), but only Linux seems
+ * to have SIOCGETRPF, which is used in the #else below ... the original
+ * authors wanted to merge routesock.c and netlink.c, but I don't know
+ * anymore. --Joachim */
 #ifdef HAVE_ROUTING_SOCKETS
 union sockunion {
     struct  sockaddr sa;
@@ -61,7 +64,7 @@ int routing_socket = -1;
 int rtm_addrs;
 static pid_t pid;
 struct rt_metrics rt_metrics;
-u_long rtm_inits;
+uint32_t rtm_inits;
 
 struct {
     struct  rt_msghdr m_rtm;
@@ -96,24 +99,22 @@ int init_routesock(void)
 #if 0
     int on = 0;
 #endif
-    
-    pid = getpid();
 
     routing_socket = socket(PF_ROUTE, SOCK_RAW, 0);
     if (routing_socket < 0) {
-	logit(LOG_ERR, 0, "\nRouting socket error");
+	logit(LOG_ERR, errno, "Failed creating routing socket");
 	return -1;
     }
 
     if (fcntl(routing_socket, F_SETFL, O_NONBLOCK) == -1) {
-	logit(LOG_ERR, 0, "\n Routing socket error");
+	logit(LOG_ERR, errno, "Failed setting routing socket as non-blocking");
 	return -1;
     }
 
 #if 0
     /* XXX: if it is OFF, no queries will succeed (!?) */
     if (setsockopt(routing_socket, SOL_SOCKET, SO_USELOOPBACK, (char *)&on, sizeof(on)) < 0) {
-	logit(LOG_ERR, 0 , "\n setsockopt(SO_USELOOPBACK, 0)");
+	logit(LOG_ERR, errno , "setsockopt(SO_USELOOPBACK, 0)");
 	return -1;
     }
 #endif
@@ -122,9 +123,9 @@ int init_routesock(void)
 }
 
 /* get the rpf neighbor info */
-int k_req_incoming(u_int32 source, struct rpfctl *rpfp)
+int k_req_incoming(uint32_t source, struct rpfctl *rpfp)
 {
-    int rlen, l, flags = RTF_STATIC;
+    int rlen, l, flags = RTF_STATIC, retry_count = 3;
     sup su;
     static int seq;
     char *cp = m_rtmsg.m_space;
@@ -150,14 +151,14 @@ int k_req_incoming(u_int32 source, struct rpfctl *rpfp)
     /* initialize */
     rpfp->rpfneighbor.s_addr = INADDR_ANY_N;
     rpfp->source.s_addr = source;
-    
+
     /* check if local address or directly connected before calling the
      * routing socket
      */
     if ((rpfp->iif = find_vif_direct_local(source)) != NO_VIF) {
 	rpfp->rpfneighbor.s_addr = source;
 	return TRUE;
-    }       
+    }
 
     /* prepare the routing socket params */
     rtm_addrs |= RTA_DST;
@@ -189,38 +190,53 @@ int k_req_incoming(u_int32 source, struct rpfctl *rpfp)
     memset (&m_rtmsg, 0, sizeof(m_rtmsg));
 
 #define rtm m_rtmsg.m_rtm
-    rtm.rtm_type	= RTM_GET;
-    rtm.rtm_flags	= flags;
-    rtm.rtm_version	= RTM_VERSION;
-    rtm.rtm_seq 	= ++seq;
-    rtm.rtm_addrs	= rtm_addrs;
-    rtm.rtm_rmx 	= rt_metrics;
-    rtm.rtm_inits	= rtm_inits;
+    rtm.rtm_type        = RTM_GET;
+    rtm.rtm_flags       = flags;
+    rtm.rtm_version     = RTM_VERSION;
+    rtm.rtm_seq         = ++seq;
+    rtm.rtm_addrs       = rtm_addrs;
+    rtm.rtm_rmx         = rt_metrics;
+    rtm.rtm_inits       = rtm_inits;
 
     NEXTADDR(RTA_DST, so_dst);
     NEXTADDR(RTA_IFP, so_ifp);
     rtm.rtm_msglen = l = cp - (char *)&m_rtmsg;
-    
-    if ((rlen = write(routing_socket, (char *)&m_rtmsg, l)) < 0) {
+
+    rlen = write(routing_socket, &m_rtmsg, l);
+    if (rlen <= 0) {
 	IF_DEBUG(DEBUG_RPF | DEBUG_KERN) {
 	    if (errno == ESRCH)
-		logit(LOG_DEBUG, 0, "Writing to routing socket: no such route\n");
+		logit(LOG_DEBUG, 0, "Writing to routing socket: no such route");
 	    else
 		logit(LOG_DEBUG, 0, "Error writing to routing socket");
 	}
-	return FALSE;
-    }
-    
-    do {
-	l = read(routing_socket, (char *)&m_rtmsg, sizeof(m_rtmsg));
-    } while (l > 0 && (rtm.rtm_seq != seq || rtm.rtm_pid != pid));
-    
-    if (l < 0) {
-	IF_DEBUG(DEBUG_RPF | DEBUG_KERN) {
-	    logit(LOG_DEBUG, errno, "Read from routing socket failed");
-	}
 
 	return FALSE;
+    }
+
+    pid = getpid();
+
+    while (1) {
+	rlen = read(routing_socket, &m_rtmsg, sizeof(m_rtmsg));
+	if (rlen < 0) {
+	    if (errno == EINTR)
+		continue;	/* Signalled, retry syscall. */
+	    if (errno == EAGAIN && retry_count--) {
+		logit(LOG_DEBUG, 0, "Kernel busy, retrying (%d/3) routing socket read in one sec ...", 3 - retry_count);
+		sleep(1);
+		continue;
+	    }
+
+	    IF_DEBUG(DEBUG_RPF | DEBUG_KERN)
+		logit(LOG_DEBUG, errno, "Read from routing socket failed");
+
+	    return FALSE;
+	}
+
+	if (rlen > 0 && (rtm.rtm_seq != seq || rtm.rtm_pid != pid))
+	    continue;
+
+	break;
     }
 
     memset(&rpfinfo, 0, sizeof(rpfinfo));
@@ -233,7 +249,8 @@ int k_req_incoming(u_int32 source, struct rpfctl *rpfp)
     return TRUE;
 }
 
-static void find_sockaddrs(struct rt_msghdr *rtm, struct sockaddr **dst, struct sockaddr **gate, struct sockaddr **mask, struct sockaddr_dl **ifp)
+static void find_sockaddrs(struct rt_msghdr *rtm, struct sockaddr **dst, struct sockaddr **gate,
+			   struct sockaddr **mask, struct sockaddr_dl **ifp)
 {
     int i;
     char *cp = (char *)(rtm + 1);
@@ -271,7 +288,7 @@ static void find_sockaddrs(struct rt_msghdr *rtm, struct sockaddr **dst, struct 
 /*
  * Returns TRUE on success, FALSE otherwise. rpfinfo contains the result.
  */
-int getmsg(struct rt_msghdr *rtm, int msglen __attribute__((unused)), struct rpfctl *rpfinfop)
+static int getmsg(struct rt_msghdr *rtm, int msglen __attribute__((unused)), struct rpfctl *rpf)
 {
     struct sockaddr *dst = NULL, *gate = NULL, *mask = NULL;
     struct sockaddr_dl *ifp = NULL;
@@ -279,22 +296,23 @@ int getmsg(struct rt_msghdr *rtm, int msglen __attribute__((unused)), struct rpf
     vifi_t vifi;
     struct uvif *v;
 
-    if (rpfinfop == (struct rpfctl *)NULL)
+    if (!rpf) {
+	logit(LOG_WARNING, 0, "Missing rpf pointer to routesock.c:getmsg()!");
 	return FALSE;
-    
-    in = ((struct sockaddr_in *)&so_dst)->sin_addr;
-    IF_DEBUG(DEBUG_RPF) {
-	logit(LOG_DEBUG, 0, "route to: %s", inet_fmt(in.s_addr, s1, sizeof(s1)));
     }
+
+    rpf->iif = NO_VIF;
+    rpf->rpfneighbor.s_addr = INADDR_ANY;
+
+    in = ((struct sockaddr_in *)&so_dst)->sin_addr;
+    IF_DEBUG(DEBUG_RPF)
+	logit(LOG_DEBUG, 0, "route to: %s", inet_fmt(in.s_addr, s1, sizeof(s1)));
 
     find_sockaddrs(rtm, &dst, &gate, &mask, &ifp);
 
     if (!ifp) {			/* No incoming interface */
-	IF_DEBUG(DEBUG_RPF) {
-	    logit(LOG_DEBUG, 0,
-		  "No incoming interface for destination %s",
-		  inet_fmt(in.s_addr, s1, sizeof(s1)));
-	}
+	IF_DEBUG(DEBUG_RPF)
+	    logit(LOG_DEBUG, 0, "No incoming interface for destination %s", inet_fmt(in.s_addr, s1, sizeof(s1)));
 
 	return FALSE;
     }
@@ -304,21 +322,18 @@ int getmsg(struct rt_msghdr *rtm, int msglen __attribute__((unused)), struct rpf
 
     if (dst) {
 	in = ((struct sockaddr_in *)dst)->sin_addr;
-	IF_DEBUG(DEBUG_RPF) {
-	    logit(LOG_DEBUG, 0, " destination is: %s",
-		  inet_fmt(in.s_addr, s1, sizeof(s1)));
-	}
+	IF_DEBUG(DEBUG_RPF)
+	    logit(LOG_DEBUG, 0, " destination is: %s", inet_fmt(in.s_addr, s1, sizeof(s1)));
     }
 
     if (gate && (rtm->rtm_flags & RTF_GATEWAY)) {
 	in = ((struct sockaddr_in *)gate)->sin_addr;
-	IF_DEBUG(DEBUG_RPF) {
-	    logit(LOG_DEBUG, 0, " gateway is: %s",
-		  inet_fmt(in.s_addr, s1, sizeof(s1)));
-	}
-	rpfinfop->rpfneighbor = in;
+	IF_DEBUG(DEBUG_RPF)
+	    logit(LOG_DEBUG, 0, " gateway is: %s", inet_fmt(in.s_addr, s1, sizeof(s1)));
+
+	rpf->rpfneighbor = in;
     }
-    
+
     for (vifi = 0, v = uvifs; vifi < numvifs; ++vifi, ++v) {
 	/* get the number of the interface by matching the name */
 	if ((strlen(v->uv_name) == ifp->sdl_nlen)
@@ -326,50 +341,51 @@ int getmsg(struct rt_msghdr *rtm, int msglen __attribute__((unused)), struct rpf
 	    break;
     }
 
-    IF_DEBUG(DEBUG_RPF) {
+    /* Found inbound interface in vifi */
+    rpf->iif = vifi;
+
+    IF_DEBUG(DEBUG_RPF)
 	logit(LOG_DEBUG, 0, " iif is %d", vifi);
-    }
-    rpfinfop->iif = vifi;
-    
+
     if (vifi >= numvifs) {
-	IF_DEBUG(DEBUG_RPF) {
+	IF_DEBUG(DEBUG_RPF)
 	    logit(LOG_DEBUG, 0, "Invalid incoming interface for destination %s, because of invalid virtual interface",
 		  inet_fmt(in.s_addr, s1, sizeof(s1)));
-	}
 
 	return FALSE;		/* invalid iif */
     }
-    
+
     return TRUE;
 }
 
 
-#else	/* !HAVE_ROUTING_SOCKETS */
+#else /* !HAVE_ROUTING_SOCKETS -- if we want to run on Linux without Netlink */
 
+/* API compat dummy. */
+int init_routesock(void)
+{
+    return dup(udp_socket);
+}
 
 /*
  * Return in rpfcinfo the incoming interface and the next hop router
  * toward source.
  */
 /* TODO: check whether next hop router address is in network or host order */
-int k_req_incoming(u_int32 source, struct rpfctl *rpfcinfo)
+int k_req_incoming(uint32_t source, struct rpfctl *rpfcinfo)
 {
-    rpfcinfo->source.s_addr = source;
-    rpfcinfo->iif = NO_VIF;     /* just initialized, will be */
-    /* changed in kernel */
-    rpfcinfo->rpfneighbor.s_addr = INADDR_ANY;   /* initialized */
-    
+    rpfcinfo->source.s_addr      = source;
+    rpfcinfo->iif                = NO_VIF;     /* Initialize, will be changed in kernel */
+    rpfcinfo->rpfneighbor.s_addr = INADDR_ANY; /* Initialize */
+
     if (ioctl(udp_socket, SIOCGETRPF, (char *) rpfcinfo) < 0) {
-	logit(LOG_ERR, errno, "ioctl SIOCGETRPF k_req_incoming");
+	logit(LOG_WARNING, errno, "Failed ioctl SIOCGETRPF in k_req_incoming()");
 	return FALSE;
     }
 
     return TRUE;
 }
 #endif /* HAVE_ROUTING_SOCKETS */
-#else  /* Linux */
-static int dummy __attribute__((unused));
-#endif /* !__linux__ */
 
 /**
  * Local Variables:

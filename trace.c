@@ -50,16 +50,9 @@
  * Traceroute function which returns traceroute replies to the requesting
  * router. Also forwards the request to downstream routers.
  */
-void
-accept_mtrace(src, dst, group, data, no, datalen)
-    u_int32 src;
-    u_int32 dst;
-    u_int32 group;
-    char *data;
-    u_int no;   /* promoted u_char */
-    int datalen;
+void accept_mtrace(uint32_t src, uint32_t dst, uint32_t group, char *data, u_int no, int datalen)
 {
-    u_char type;
+    uint8_t type;
     mrtentry_t *mrt;
     struct tr_query *qry;
     struct tr_resp  *resp;
@@ -74,10 +67,10 @@ accept_mtrace(src, dst, group, data, no, datalen)
     /* TODO */
     struct sioc_sg_req sg_req;
 #endif /* 0 */
-    u_int32 parent_address = INADDR_ANY;
+    uint32_t parent_address = INADDR_ANY;
 
     /* Remember qid across invocations */
-    static u_int32 oqid = 0;
+    static uint32_t oqid = 0;
 
     /* timestamp the request/response */
     gettimeofday(&tp, 0);
@@ -87,22 +80,23 @@ accept_mtrace(src, dst, group, data, no, datalen)
      */
     if (datalen == QLEN) {
         type = QUERY;
-        IF_DEBUG(DEBUG_TRACE)
+        IF_DEBUG(DEBUG_TRACE) {
             logit(LOG_DEBUG, 0, "Initial traceroute query rcvd from %s to %s",
                   inet_fmt(src, s1, sizeof(s1)), inet_fmt(dst, s2, sizeof(s2)));
-    }
-    else if ((datalen - QLEN) % RLEN == 0) {
+	}
+    } else if ((datalen - QLEN) % RLEN == 0) {
         type = RESP;
-        IF_DEBUG(DEBUG_TRACE)
+        IF_DEBUG(DEBUG_TRACE) {
             logit(LOG_DEBUG, 0, "In-transit traceroute query rcvd from %s to %s",
                   inet_fmt(src, s1, sizeof(s1)), inet_fmt(dst, s2, sizeof(s2)));
+	}
         if (IN_MULTICAST(ntohl(dst))) {
-            IF_DEBUG(DEBUG_TRACE)
+            IF_DEBUG(DEBUG_TRACE) {
                 logit(LOG_DEBUG, 0, "Dropping multicast response");
+	    }
             return;
         }
-    }
-    else {
+    } else {
         logit(LOG_WARNING, 0, "%s from %s to %s",
               "Non decipherable traceroute request recieved",
               inet_fmt(src, s1, sizeof(s1)), inet_fmt(dst, s2, sizeof(s2)));
@@ -165,47 +159,50 @@ accept_mtrace(src, dst, group, data, no, datalen)
              * only get N copies, N <= the number of interfaces on the router,
              * it is not fatal.
              */
-            IF_DEBUG(DEBUG_TRACE)
+            IF_DEBUG(DEBUG_TRACE) {
                 logit(LOG_DEBUG, 0, "ignoring duplicate traceroute packet");
+	    }
             return;
         }
 
-        if (mrt == (mrtentry_t *)NULL) {
-            IF_DEBUG(DEBUG_TRACE)
-                logit(LOG_DEBUG, 0, "Mcast traceroute: no route entry %s",
-                      inet_fmt(qry->tr_src, s1, sizeof(s1)));
+        if (!mrt) {
+            IF_DEBUG(DEBUG_TRACE) {
+                logit(LOG_DEBUG, 0, "Mcast traceroute: no route entry %s", inet_fmt(qry->tr_src, s1, sizeof(s1)));
+	    }
             if (IN_MULTICAST(ntohl(dst)))
                 return;
         }
-        vifi = find_vif_direct(qry->tr_dst);
 
+        vifi = find_vif_direct(qry->tr_dst);
         if (vifi == NO_VIF) {
             /* The traceroute destination is not on one of my subnet vifs. */
-            IF_DEBUG(DEBUG_TRACE)
-                logit(LOG_DEBUG, 0, "Destination %s not an interface",
-                      inet_fmt(qry->tr_dst, s1, sizeof(s1)));
+            IF_DEBUG(DEBUG_TRACE) {
+                logit(LOG_DEBUG, 0, "Destination %s not an interface", inet_fmt(qry->tr_dst, s1, sizeof(s1)));
+	    }
             if (IN_MULTICAST(ntohl(dst)))
                 return;
             errcode = TR_WRONG_IF;
-        } else if (mrt != (mrtentry_t *)NULL && !VIFM_ISSET(vifi, mrt->oifs)) {
-            IF_DEBUG(DEBUG_TRACE)
+        } else if (mrt && !VIFM_ISSET(vifi, mrt->oifs)) {
+            IF_DEBUG(DEBUG_TRACE) {
                 logit(LOG_DEBUG, 0,
                       "Destination %s not on forwarding tree for src %s",
                       inet_fmt(qry->tr_dst, s1, sizeof(s1)), inet_fmt(qry->tr_src, s2, sizeof(s2)));
+	    }
             if (IN_MULTICAST(ntohl(dst)))
                 return;
             errcode = TR_WRONG_IF;
         }
-    }
-    else {
+    } else {
         /*
          * determine which interface the packet came in on
          * RESP packets travel hop-by-hop so this either traversed
          * a tunnel or came from a directly attached mrouter.
          */
-        if ((vifi = find_vif_direct(src)) == NO_VIF) {
-            IF_DEBUG(DEBUG_TRACE)
-                logit(LOG_DEBUG, 0, "Wrong interface for packet");
+	vifi = find_vif_direct(src);
+	if (vifi == NO_VIF) {
+	    IF_DEBUG(DEBUG_TRACE) {
+		logit(LOG_DEBUG, 0, "Wrong interface for packet");
+	    }
             errcode = TR_WRONG_IF;
         }
     }
@@ -213,14 +210,13 @@ accept_mtrace(src, dst, group, data, no, datalen)
     /* Now that we've decided to send a response, save the qid */
     oqid = qry->tr_qid;
 
-    IF_DEBUG(DEBUG_TRACE)
+    IF_DEBUG(DEBUG_TRACE) {
         logit(LOG_DEBUG, 0, "Sending traceroute response");
+    }
 
     /* copy the packet to the sending buffer */
-    p = igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN;
-
+    p = igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN;
     bcopy(data, p, datalen);
-
     p += datalen;
 
     /*
@@ -262,20 +258,22 @@ accept_mtrace(src, dst, group, data, no, datalen)
      */
 /* TODO */
 #if 0
-    if (mrt != (mrtentry_t *)NULL)
+    if (mrt) {
         for (gt = rt->rt_groups; gt; gt = gt->gt_next) {
             if (gt->gt_mcastgrp >= group)
                 break;
         }
-    else
+    } else {
         gt = NULL;
+    }
 
     if (gt && gt->gt_mcastgrp == group) {
         struct stable *st;
 
-        for (st = gt->gt_srctbl; st; st = st->st_next)
+        for (st = gt->gt_srctbl; st; st = st->st_next) {
             if (qry->tr_src == st->st_origin)
                 break;
+	}
 
         sg_req.src.s_addr = qry->tr_src;
         sg_req.grp.s_addr = group;
@@ -285,16 +283,17 @@ accept_mtrace(src, dst, group, data, no, datalen)
         else
             resp->tr_pktcnt = htonl(st ? st->st_savpkt : 0xffffffff);
 
-        if (VIFM_ISSET(vifi, gt->gt_scope))
+        if (VIFM_ISSET(vifi, gt->gt_scope)) {
             resp->tr_rflags = TR_SCOPED;
-        else if (gt->gt_prsent_timer)
+	} else if (gt->gt_prsent_timer) {
             resp->tr_rflags = TR_PRUNED;
-        else if (!VIFM_ISSET(vifi, gt->gt_grpmems))
+        } else if (!VIFM_ISSET(vifi, gt->gt_grpmems)) {
             if (VIFM_ISSET(vifi, rt->rt_children) &&
                 NBRM_ISSETMASK(uvifs[vifi].uv_nbrmap, rt->rt_subordinates)) /*XXX*/
                 resp->tr_rflags = TR_OPRUNED;
             else
                 resp->tr_rflags = TR_NO_FWD;
+	}
     } else {
         if (scoped_addr(vifi, group))
             resp->tr_rflags = TR_SCOPED;
@@ -306,7 +305,7 @@ accept_mtrace(src, dst, group, data, no, datalen)
     /*
      *  if no rte exists, set NO_RTE error
      */
-    if (mrt == (mrtentry_t *)NULL) {
+    if (!mrt) {
         src = dst;		/* the dst address of resp. pkt */
         resp->tr_inaddr   = 0;
         resp->tr_rflags   = TR_NO_RTE;
@@ -324,13 +323,13 @@ accept_mtrace(src, dst, group, data, no, datalen)
         */
         src = uvifs[mrt->incoming].uv_lcl_addr;
         resp->tr_inaddr = src;
-        if (mrt->upstream != (pim_nbr_entry_t *)NULL)
+        if (mrt->upstream)
             parent_address = mrt->upstream->address;
         else
             parent_address = INADDR_ANY;
 
         resp->tr_rmtaddr = parent_address;
-        if (!VIFM_ISSET(vifi, mrt->oifs)) {
+        if (vifi != NO_VIF && !VIFM_ISSET(vifi, mrt->oifs)) {
             IF_DEBUG(DEBUG_TRACE)
                 logit(LOG_DEBUG, 0, "Destination %s not on forwarding tree for src %s",
                       inet_fmt(qry->tr_dst, s1, sizeof(s1)), inet_fmt(qry->tr_src, s2, sizeof(s2)));
@@ -357,24 +356,25 @@ accept_mtrace(src, dst, group, data, no, datalen)
     if ((rcount + 1 == no) || (mrt == NULL) || (mrt->metric == 1)) {
         resptype = IGMP_MTRACE_RESP;
         dst = qry->tr_raddr;
-    } else
-
-#if 0   /* TODO */
-    if (!can_mtrace(rt->rt_parent, rt->rt_gateway)) {
-        dst = qry->tr_raddr;
-        resp->tr_rflags = TR_OLD_ROUTER;
-        resptype = IGMP_MTRACE_RESP;
     } else {
-#endif  /* 0 */
-        if (mrt->upstream != (pim_nbr_entry_t *)NULL)
-            parent_address = mrt->upstream->address;
-        else
-            parent_address = INADDR_ANY;
-        dst = parent_address;
-        resptype = IGMP_MTRACE;
 #if 0   /* TODO */
-    }
+	if (!can_mtrace(rt->rt_parent, rt->rt_gateway)) {
+	    dst = qry->tr_raddr;
+	    resp->tr_rflags = TR_OLD_ROUTER;
+	    resptype = IGMP_MTRACE_RESP;
+	} else {
+#endif  /* 0 */
+	    if (mrt->upstream)
+		parent_address = mrt->upstream->address;
+	    else
+		parent_address = INADDR_ANY;
+	    dst = parent_address;
+	    resptype = IGMP_MTRACE;
+#if 0   /* TODO */
+	}
 #endif
+    }
+
     if (IN_MULTICAST(ntohl(dst))) {
 	/*
 	 * Send the reply on a known multicast capable vif.
@@ -389,15 +389,15 @@ accept_mtrace(src, dst, group, data, no, datalen)
 	    send_igmp(igmp_send_buf, uvifs[phys_vif].uv_lcl_addr, dst,
 		      resptype, no, group, datalen);
 	    k_set_ttl(igmp_socket, 1);
-	} else
-	    logit(LOG_INFO, 0, "No enabled phyints -- %s",
-		  "dropping traceroute reply");
+	} else {
+	    logit(LOG_INFO, 0, "No enabled phyints -- dropping traceroute reply");
+	}
     } else {
-	IF_DEBUG(DEBUG_TRACE)
+	IF_DEBUG(DEBUG_TRACE) {
 	    logit(LOG_DEBUG, 0, "Sending %s to %s from %s",
 		  resptype == IGMP_MTRACE_RESP ?  "reply" : "request on",
 		  inet_fmt(dst, s1, sizeof(s1)), inet_fmt(src, s2, sizeof(s2)));
-
+	}
 	send_igmp(igmp_send_buf, src, dst, resptype, no, group, datalen);
     }
 }
@@ -407,15 +407,15 @@ accept_mtrace(src, dst, group, data, no, datalen)
  * accept_neighbor_request() supports some old DVMRP messages from mrinfo.
  * Haven't tested it, because I have only the new mrinfo.
  */
-void accept_neighbor_request(u_int32 src, u_int32 dst __attribute__((unused)))
+void accept_neighbor_request(uint32_t src, uint32_t dst __attribute__((unused)))
 {
     vifi_t vifi;
     struct uvif *v;
-    u_char *p, *ncount;
+    uint8_t *p, *ncount;
 /*    struct listaddr *la; */
     pim_nbr_entry_t *pim_nbr;
     int datalen;
-    u_int32 temp_addr, them = src;
+    uint32_t temp_addr, them = src;
 
 #define PUT_ADDR(a)     temp_addr = ntohl(a);	\
     *p++ = temp_addr >> 24;			\
@@ -423,7 +423,7 @@ void accept_neighbor_request(u_int32 src, u_int32 dst __attribute__((unused)))
     *p++ = (temp_addr >> 8) & 0xFF;		\
     *p++ = temp_addr & 0xFF;
 
-    p = (u_char *) (igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN);
+    p = (uint8_t *) (igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN);
     datalen = 0;
 
     for (vifi = 0, v = uvifs; vifi < numvifs; vifi++, v++) {
@@ -439,7 +439,7 @@ void accept_neighbor_request(u_int32 src, u_int32 dst __attribute__((unused)))
 	    if (datalen + (ncount == 0 ? 4 + 3 + 4 : 4) > MAX_DVMRP_DATA_LEN) {
 		send_igmp(igmp_send_buf, INADDR_ANY, them, IGMP_DVMRP,
 			  DVMRP_NEIGHBORS, htonl(PIMD_LEVEL), datalen);
-		p = (u_char *) (igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN);
+		p = (uint8_t *) (igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN);
 		datalen = 0;
 		ncount = 0;
 	    }
@@ -472,22 +472,23 @@ void accept_neighbor_request(u_int32 src, u_int32 dst __attribute__((unused)))
  * XXX: currently, we cannot specify the used multicast routing protocol;
  * only a protocol version is returned.
  */
-void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
+void accept_neighbor_request2(uint32_t src, uint32_t dst __attribute__((unused)))
 {
     vifi_t vifi;
     struct uvif *v;
-    u_char *p, *ncount;
+    uint8_t *p, *ncount;
 /*    struct listaddr *la; */
     pim_nbr_entry_t *pim_nbr;
     int datalen;
-    u_int32 them = src;
+    uint32_t them = src;
 
-    p = (u_char *) (igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN);
+    p = (uint8_t *) (igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN);
     datalen = 0;
 
     for (vifi = 0, v = uvifs; vifi < numvifs; vifi++, v++) {
-	register u_int32 vflags = v->uv_flags;
-	register u_char rflags = 0;
+	uint32_t vflags = v->uv_flags;
+	uint8_t rflags = 0;
+
 	if (vflags & VIFF_TUNNEL)
 	    rflags |= DVMRP_NF_TUNNEL;
 	if (vflags & VIFF_SRCRT)
@@ -502,6 +503,7 @@ void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
 	    rflags |= DVMRP_NF_QUERIER;
 	if (vflags & VIFF_LEAF)
 	    rflags |= DVMRP_NF_LEAF;
+
 	ncount = 0;
 	pim_nbr = v->uv_pim_neighbors;
 	if (pim_nbr == (pim_nbr_entry_t *)NULL) {
@@ -511,12 +513,14 @@ void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
 	     */
 	    if (rflags & DVMRP_NF_TUNNEL)
 		rflags |= DVMRP_NF_DOWN;
+
 	    if (datalen > MAX_DVMRP_DATA_LEN - 12) {
 		send_igmp(igmp_send_buf, INADDR_ANY, them, IGMP_DVMRP,
 			  DVMRP_NEIGHBORS2, htonl(PIMD_LEVEL), datalen);
-		p = (u_char *) (igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN);
+		p = (uint8_t *) (igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN);
 		datalen = 0;
 	    }
+
 	    *(u_int*)p = v->uv_lcl_addr;
 	    p += 4;
 	    *p++ = v->uv_metric;
@@ -532,10 +536,11 @@ void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
 		if (datalen + (ncount == 0 ? 4+4+4 : 4) > MAX_DVMRP_DATA_LEN) {
 		    send_igmp(igmp_send_buf, INADDR_ANY, them, IGMP_DVMRP,
 			      DVMRP_NEIGHBORS2, htonl(PIMD_LEVEL), datalen);
-		    p = (u_char *) (igmp_send_buf + MIN_IP_HEADER_LEN + IGMP_MINLEN);
+		    p = (uint8_t *) (igmp_send_buf + IP_IGMP_HEADER_LEN + IGMP_MINLEN);
 		    datalen = 0;
 		    ncount = 0;
 		}
+
 		/* Put out the header for this neighbor list... */
 		if (ncount == 0) {
 		    *(u_int*)p = v->uv_lcl_addr;
@@ -547,6 +552,7 @@ void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
 		    *p++ = 0;
 		    datalen += 4 + 4;
 		}
+
 		*(u_int*)p = pim_nbr->address;
 		p += 4;
 		datalen += 4;
@@ -554,6 +560,7 @@ void accept_neighbor_request2(u_int32 src, u_int32 dst __attribute__((unused)))
 	    }
 	}
     }
+
     if (datalen != 0)
 	send_igmp(igmp_send_buf, INADDR_ANY, them, IGMP_DVMRP,
 		  DVMRP_NEIGHBORS2, htonl(PIMD_LEVEL), datalen);

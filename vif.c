@@ -40,6 +40,14 @@
 
 #include "defs.h"
 
+/*
+ * Helper macros
+ */
+#define is_uv_subnet(src, v) \
+    (src & v->uv_subnetmask) == v->uv_subnet && ((v->uv_subnetmask == 0xffffffff) || (src != v->uv_subnetbcast))
+
+#define is_pa_subnet(src, v) \
+    (src & p->pa_subnetmask) == p->pa_subnet && ((p->pa_subnetmask == 0xffffffff) || (src != p->pa_subnetbcast))
 
 /*
  * Exported variables.
@@ -58,6 +66,12 @@ int             total_interfaces; /* Number of all interfaces: including the
 				   * capable interfaces.
 				   */
 
+uint32_t	default_route_metric   = UCAST_DEFAULT_ROUTE_METRIC;
+uint32_t	default_route_distance = UCAST_DEFAULT_ROUTE_DISTANCE;
+
+/*
+ * Forward declarations
+ */
 static void start_vif      (vifi_t vifi);
 static void stop_vif       (vifi_t vifi);
 static void start_all_vifs (void);
@@ -86,9 +100,8 @@ void init_vifs(void)
 #endif
 
     /* Clean up all vifs */
-    for (vifi = 0, v = uvifs; vifi < MAXVIFS; ++vifi, ++v) {
+    for (vifi = 0, v = uvifs; vifi < MAXVIFS; ++vifi, ++v)
 	zero_vif(v, FALSE);
-    }
 
     logit(LOG_INFO, 0, "Getting vifs from kernel");
     config_vifs_from_kernel();
@@ -98,7 +111,8 @@ void init_vifs(void)
        for (vifi = 0, v = uvifs; vifi < numvifs; ++vifi, ++v)
           v->uv_flags |= VIFF_DISABLED;
     }
-    logit(LOG_INFO, 0, "Getting vifs from %s", configfilename);
+
+    logit(LOG_INFO, 0, "Getting vifs from %s", config_file);
     config_vifs_from_file();
 
     /*
@@ -142,7 +156,7 @@ void init_vifs(void)
  */
 void zero_vif(struct uvif *v, int t)
 {
-    v->uv_flags		= 0;
+    v->uv_flags		= 0;	/* Default to IGMPv3 */
     v->uv_metric	= DEFAULT_METRIC;
     v->uv_admetric	= 0;
     v->uv_threshold	= DEFAULT_THRESHOLD;
@@ -164,12 +178,16 @@ void zero_vif(struct uvif *v, int t)
     RESET_TIMER(v->uv_leaf_timer);
     v->uv_addrs		= (struct phaddr *)NULL;
     v->uv_filter	= (struct vif_filter *)NULL;
-    RESET_TIMER(v->uv_pim_hello_timer);
+
+    RESET_TIMER(v->uv_hello_timer);
+    v->uv_dr_prio       = PIM_HELLO_DR_PRIO_DEFAULT;
+    v->uv_genid         = 0;
+
     RESET_TIMER(v->uv_gq_timer);
     RESET_TIMER(v->uv_jp_timer);
     v->uv_pim_neighbors	= (struct pim_nbr_entry *)NULL;
-    v->uv_local_pref	= default_source_preference;
-    v->uv_local_metric	= default_source_metric;
+    v->uv_local_pref	= default_route_distance;
+    v->uv_local_metric	= default_route_metric;
 #ifdef __linux__
     v->uv_ifindex	= -1;
 #endif /* __linux__ */
@@ -294,7 +312,11 @@ static void start_vif(vifi_t vifi)
 	v->uv_flags = v->uv_flags & ~VIFF_DOWN;
     else {
 	v->uv_flags = (v->uv_flags | VIFF_DR | VIFF_NONBRS) & ~VIFF_DOWN;
-	SET_TIMER(v->uv_pim_hello_timer, 1 + RANDOM() % PIM_TIMER_HELLO_PERIOD);
+
+	/* https://tools.ietf.org/html/draft-ietf-pim-hello-genid-01 */
+	v->uv_genid = RANDOM();
+
+	SET_TIMER(v->uv_hello_timer, 1 + RANDOM() % pim_timer_hello_interval);
 	SET_TIMER(v->uv_jp_timer, 1 + RANDOM() % PIM_JOIN_PRUNE_PERIOD);
 	/* TODO: CHECK THE TIMERS!!!!! Set or reset? */
 	RESET_TIMER(v->uv_gq_timer);
@@ -306,43 +328,45 @@ static void start_vif(vifi_t vifi)
     logit(LOG_INFO, 0, "Interface %s comes up; vif #%u now in service", v->uv_name, vifi);
 
     if (!(v->uv_flags & VIFF_REGISTER)) {
-	/*
-	 * Join the PIM multicast group on the interface.
-	 */
-	k_join(igmp_socket, allpimrouters_group, v);
+	/* Join the PIM multicast group on the interface. */
+	k_join(pim_socket, allpimrouters_group, v);
 
-	/*
-	 * Join the ALL-ROUTERS multicast group on the interface.
-	 * This allows mtrace requests to loop back if they are run
-	 * on the multicast router.
-	 */
+	/* Join the ALL-ROUTERS multicast group on the interface.  This
+	 * allows mtrace requests to loop back if they are run on the
+	 * multicast router. */
 	k_join(igmp_socket, allrouters_group, v);
 
-	/*
-	 * Until neighbors are discovered, assume responsibility for sending
+	/* Join INADDR_ALLRPTS_GROUP to support IGMPv3 membership reports */
+	k_join(igmp_socket, allreports_group, v);
+
+	/* Until neighbors are discovered, assume responsibility for sending
 	 * periodic group membership queries to the subnet.  Send the first
-	 * query.
-	 */
+	 * query. */
 	v->uv_flags |= VIFF_QUERIER;
 	query_groups(v);
 
-	/*
-	 * Send a probe via the new vif to look for neighbors.
-	 */
-	send_pim_hello(v, PIM_TIMER_HELLO_HOLDTIME);
+	/* Send a probe via the new vif to look for neighbors. */
+	send_pim_hello(v, pim_timer_hello_holdtime);
     }
 #ifdef __linux__
     else {
 	struct ifreq ifr;
 
 	memset(&ifr, 0, sizeof(struct ifreq));
-	/* strlcpy(ifr.ifr_name,v->uv_name, IFNAMSIZ); */
-	strlcpy(ifr.ifr_name, "pimreg", IFNAMSIZ);
+
+	if (mrt_table_id != 0) {
+	        logit(LOG_INFO, 0, "Initializing pimreg%u", mrt_table_id);
+		snprintf(ifr.ifr_name, IFNAMSIZ, "pimreg%u", mrt_table_id);
+	} else {
+		strlcpy(ifr.ifr_name, "pimreg", IFNAMSIZ);
+	}
+
 	if (ioctl(udp_socket, SIOGIFINDEX, (char *) &ifr) < 0) {
 	    logit(LOG_ERR, errno, "ioctl SIOGIFINDEX for %s", ifr.ifr_name);
 	    /* Not reached */
 	    return;
 	}
+
 	v->uv_ifindex = ifr.ifr_ifindex;
     }
 #endif /* __linux__ */
@@ -356,7 +380,7 @@ static void start_vif(vifi_t vifi)
 static void stop_vif(vifi_t vifi)
 {
     struct uvif *v;
-    struct listaddr *a;
+    struct listaddr *a, *b;
     pim_nbr_entry_t *n, *next;
     struct vif_acl *acl;
 
@@ -366,16 +390,23 @@ static void stop_vif(vifi_t vifi)
      */
     v = &uvifs[vifi];
     if (!(v->uv_flags & VIFF_REGISTER)) {
-	k_leave(igmp_socket, allpimrouters_group, v);
+	k_leave(pim_socket, allpimrouters_group, v);
 	k_leave(igmp_socket, allrouters_group, v);
-	/*
-	 * Discard all group addresses.  (No need to tell kernel;
-	 * the k_del_vif() call will clean up kernel state.)
-	 */
-	while (v->uv_groups != NULL) {
+	k_leave(igmp_socket, allreports_group, v);
+
+	/* Discard all group addresses.  (No need to tell kernel;
+	 * the k_del_vif() call will clean up kernel state.) */
+	while (v->uv_groups) {
 	    a = v->uv_groups;
 	    v->uv_groups = a->al_next;
-	    free((char *)a);
+
+	    while (a->al_sources) {
+		b = a->al_sources;
+		a->al_sources = a->al_next;
+		free(b);
+	    }
+
+	    free(a);
 	}
     }
 
@@ -391,23 +422,23 @@ static void stop_vif(vifi_t vifi)
 
     v->uv_flags = (v->uv_flags & ~VIFF_DR & ~VIFF_QUERIER & ~VIFF_NONBRS) | VIFF_DOWN;
     if (!(v->uv_flags & VIFF_REGISTER)) {
-	RESET_TIMER(v->uv_pim_hello_timer);
+	RESET_TIMER(v->uv_hello_timer);
 	RESET_TIMER(v->uv_jp_timer);
 	RESET_TIMER(v->uv_gq_timer);
 
-	for (n = v->uv_pim_neighbors; n != NULL; n = next) {
+	for (n = v->uv_pim_neighbors; n; n = next) {
 	    next = n->next;	/* Free the space for each neighbour */
-	    free((char *)n);
+	    delete_pim_nbr(n);
 	}
 	v->uv_pim_neighbors = NULL;
     }
 
     /* TODO: currently not used */
    /* The Access Control List (list with the scoped addresses) */
-    while (v->uv_acl != NULL) {
+    while (v->uv_acl) {
 	acl = v->uv_acl;
 	v->uv_acl = acl->acl_next;
-	free((char *)acl);
+	free(acl);
     }
 
     vifs_down = TRUE;
@@ -550,7 +581,7 @@ void check_vif_state(void)
  * Local addresses are excluded.
  * Return the vif number or NO_VIF if not found.
  */
-vifi_t find_vif_direct(u_int32 src)
+vifi_t find_vif_direct(uint32_t src)
 {
     vifi_t vifi;
     struct uvif *v;
@@ -563,17 +594,13 @@ vifi_t find_vif_direct(u_int32 src)
 	if (src == v->uv_lcl_addr)
 	    return NO_VIF;	/* src is one of our IP addresses */
 
-	if ((src & v->uv_subnetmask) == v->uv_subnet &&
-	    ((v->uv_subnetmask == 0xffffffff) ||
-	     (src != v->uv_subnetbcast)))
+	if (is_uv_subnet(src, v))
 	    return vifi;
 
 	/* Check the extra subnets for this vif */
 	/* TODO: don't think currently pimd can handle extra subnets */
 	for (p = v->uv_addrs; p; p = p->pa_next) {
-	    if ((src & p->pa_subnetmask) == p->pa_subnet &&
-		((p->pa_subnetmask == 0xffffffff) ||
-		 (src != p->pa_subnetbcast)))
+	    if (is_pa_subnet(src, v))
 		return vifi;
 	}
 
@@ -590,7 +617,7 @@ vifi_t find_vif_direct(u_int32 src)
  * Checks if src is local address. If "yes" return the vif index,
  * otherwise return value is NO_VIF.
  */
-vifi_t local_address(u_int32 src)
+vifi_t local_address(uint32_t src)
 {
     vifi_t vifi;
     struct uvif *v;
@@ -600,9 +627,7 @@ vifi_t local_address(u_int32 src)
 	if (v->uv_flags & (VIFF_DISABLED | VIFF_DOWN | VIFF_REGISTER))
 	    continue;
 
-	if (src != v->uv_lcl_addr)
-	    continue;
-	else
+	if (src == v->uv_lcl_addr)
 	    return vifi;
     }
 
@@ -616,7 +641,7 @@ vifi_t local_address(u_int32 src)
  * (Register and tunnels excluded).
  * Return the vif number or NO_VIF if not found.
  */
-vifi_t find_vif_direct_local(u_int32 src)
+vifi_t find_vif_direct_local(uint32_t src)
 {
     vifi_t vifi;
     struct uvif *v;
@@ -630,17 +655,13 @@ vifi_t find_vif_direct_local(u_int32 src)
 	if (src == v->uv_lcl_addr)
 	    return vifi;	/* src is one of our IP addresses */
 
-	if (((src & v->uv_subnetmask) == v->uv_subnet)
-	    && ((v->uv_subnetmask == 0xffffffff)
-		|| (src != v->uv_subnetbcast)))
+	if (is_uv_subnet(src, v))
 	    return vifi;
 
 	/* Check the extra subnets for this vif */
 	/* TODO: don't think currently pimd can handle extra subnets */
 	for (p = v->uv_addrs; p; p = p->pa_next) {
-	    if (((src & p->pa_subnetmask) == p->pa_subnet)
-		&& ((p->pa_subnetmask == 0xffffffff)
-		    || (src != p->pa_subnetbcast)))
+	    if (is_pa_subnet(src, v))
 		return vifi;
 	}
 
@@ -648,6 +669,7 @@ vifi_t find_vif_direct_local(u_int32 src)
 	if ((v->uv_flags & VIFF_POINT_TO_POINT) && (src == v->uv_rmt_addr))
 	    return vifi;
     }
+
     return NO_VIF;
 }
 
@@ -655,11 +677,11 @@ vifi_t find_vif_direct_local(u_int32 src)
  * Returns the highest address of local vif that is UP and ENABLED.
  * The VIFF_REGISTER interface(s) is/are excluded.
  */
-u_int32 max_local_address(void)
+uint32_t max_local_address(void)
 {
     vifi_t vifi;
     struct uvif *v;
-    u_int32 max_address = 0;
+    uint32_t max_address = 0;
 
     for (vifi = 0, v = uvifs; vifi < numvifs; ++vifi, ++v) {
 	/* Count vif if not DISABLED or DOWN */

@@ -46,16 +46,14 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#ifdef SNMP
-#include "snmp.h"
-#endif
-
 char versionstring[100];
 int disable_all_by_default = 0;
 int haveterminal = 1;
 struct rp_hold *g_rp_hold = NULL;
+int mrt_table_id = 0;
 
-char *configfilename = _PATH_PIMD_CONF;
+char *config_file = _PATH_PIMD_CONF;
+int syslog_level = LOG_NOTICE;
 
 extern char todaysversion[];
 
@@ -66,13 +64,7 @@ static int sighandled = 0;
 #define GOT_SIGUSR2     0x08
 #define GOT_SIGALRM     0x10
 
-
-#ifdef SNMP
-#define NHANDLERS       34
-#else
 #define NHANDLERS       3
-#endif
-
 static struct ihandler {
     int fd;			/* File descriptor               */
     ihfunc_t func;		/* Function to call with &fd_set */
@@ -89,76 +81,77 @@ static struct debugname {
     {   "dvmrp_pruning",    DEBUG_DVMRP_PRUNE,    8	    },
     {   "dvmrp_routes",	    DEBUG_DVMRP_ROUTE,    7	    },
     {   "dvmrp_routing",    DEBUG_DVMRP_ROUTE,    7	    },
-    {   "dvmrp_mrt",        DEBUG_DVMRP_ROUTE,    7	    },
-    {   "dvmrp_neighbors",  DEBUG_DVMRP_PEER,     7	    },
-    {   "dvmrp_peers",	    DEBUG_DVMRP_PEER,     8	    },
-    {   "dvmrp_hello",      DEBUG_DVMRP_PEER,     7	    },
-    {   "dvmrp_timers",	    DEBUG_DVMRP_TIMER,    7	    },
-    {   "dvmrp",	    DEBUG_DVMRP,          1	    },
-    {   "igmp_proto",	    DEBUG_IGMP_PROTO,     6	    },
-    {   "igmp_timers",	    DEBUG_IGMP_TIMER,     6	    },
-    {   "igmp_members",	    DEBUG_IGMP_MEMBER,    6	    },
-    {   "groups",	    DEBUG_MEMBER,         1	    },
-    {   "membership",       DEBUG_MEMBER,         2	    },
-    {   "igmp",	            DEBUG_IGMP, 	  1	    },
-    {   "trace",	    DEBUG_TRACE,          2	    },
-    {   "mtrace",	    DEBUG_TRACE,          2	    },
-    {   "traceroute",       DEBUG_TRACE,          2	    },
-    {   "timeout",	    DEBUG_TIMEOUT,        2	    },
-    {   "callout",	    DEBUG_TIMEOUT,        3	    },
-    {   "packets",	    DEBUG_PKT,  	  2	    },
-    {   "pkt",	            DEBUG_PKT,  	  2	    },
-    {   "interfaces",       DEBUG_IF,   	  2	    },
-    {   "vif",	            DEBUG_IF,   	  1	    },
-    {   "kernel",           DEBUG_KERN,           2	    },
-    {   "cache",            DEBUG_MFC,   	  1	    },
-    {   "mfc",              DEBUG_MFC,  	  2	    },
-    {   "k_cache",          DEBUG_MFC,  	  2	    },
-    {   "k_mfc",            DEBUG_MFC,  	  2	    },
-    {   "rsrr",	            DEBUG_RSRR, 	  2	    },
-    {   "pim_detail",       DEBUG_PIM_DETAIL,     5	    },
-    {   "pim_hello",        DEBUG_PIM_HELLO,      5	    },
-    {   "pim_neighbors",    DEBUG_PIM_HELLO,      5	    },
-    {   "pim_peers",        DEBUG_PIM_HELLO,      5	    },
-    {   "pim_register",     DEBUG_PIM_REGISTER,   5	    },
-    {   "registers",        DEBUG_PIM_REGISTER,   2	    },
-    {   "pim_join_prune",   DEBUG_PIM_JOIN_PRUNE, 5	    },
-    {   "pim_j_p",          DEBUG_PIM_JOIN_PRUNE, 5	    },
-    {   "pim_jp",           DEBUG_PIM_JOIN_PRUNE, 5	    },
-    {   "pim_bootstrap",    DEBUG_PIM_BOOTSTRAP,  5	    },
-    {   "pim_bsr",          DEBUG_PIM_BOOTSTRAP,  5	    },
-    {   "bsr",	            DEBUG_PIM_BOOTSTRAP,  1	    },
-    {   "bootstrap",        DEBUG_PIM_BOOTSTRAP,  1	    },
-    {   "pim_asserts",      DEBUG_PIM_ASSERT,     5	    },
-    {   "pim_cand_rp",      DEBUG_PIM_CAND_RP,    5	    },
-    {   "pim_c_rp",         DEBUG_PIM_CAND_RP,    5	    },
-    {   "pim_rp",           DEBUG_PIM_CAND_RP,    6	    },
-    {   "rp",	            DEBUG_PIM_CAND_RP,    2	    },
-    {   "pim_routes",       DEBUG_PIM_MRT,        6	    },
-    {   "pim_routing",      DEBUG_PIM_MRT,        6	    },
-    {   "pim_mrt",          DEBUG_PIM_MRT,        5	    },
-    {   "pim_timers",       DEBUG_PIM_TIMER,      5	    },
-    {   "pim_rpf",          DEBUG_PIM_RPF,        6	    },
-    {   "rpf",              DEBUG_RPF,            3	    },
-    {   "pim",              DEBUG_PIM,  	  1	    },
-    {   "routes",	    DEBUG_MRT,            1	    },
-    {   "routing",	    DEBUG_MRT,            1	    },
-    {   "mrt",  	    DEBUG_MRT,            1	    },
-    {   "neighbors",        DEBUG_NEIGHBORS,      1	    },
-    {   "routers",          DEBUG_NEIGHBORS,      6	    },
-    {   "mrouters",         DEBUG_NEIGHBORS,      7	    },
-    {   "peers",            DEBUG_NEIGHBORS,      1	    },
-    {   "timers",           DEBUG_TIMER,          1	    },
-    {   "asserts",          DEBUG_ASSERT,         1	    },
-    {   "all",              DEBUG_ALL,            2         },
-    {   "3",	            0xffffffff,           1	    }    /* compat. */
+    {	"dvmrp_mrt",	    DEBUG_DVMRP_ROUTE,	  7	    },
+    {	"dvmrp_neighbors",  DEBUG_DVMRP_PEER,	  7	    },
+    {	"dvmrp_peers",	    DEBUG_DVMRP_PEER,	  8	    },
+    {	"dvmrp_hello",	    DEBUG_DVMRP_PEER,	  7	    },
+    {	"dvmrp_timers",	    DEBUG_DVMRP_TIMER,	  7	    },
+    {	"dvmrp",	    DEBUG_DVMRP,	  1	    },
+    {	"igmp_proto",	    DEBUG_IGMP_PROTO,	  6	    },
+    {	"igmp_timers",	    DEBUG_IGMP_TIMER,	  6	    },
+    {	"igmp_members",	    DEBUG_IGMP_MEMBER,	  6	    },
+    {	"groups",	    DEBUG_MEMBER,	  1	    },
+    {	"membership",	    DEBUG_MEMBER,	  2	    },
+    {	"igmp",		    DEBUG_IGMP,		  1	    },
+    {	"trace",	    DEBUG_TRACE,	  2	    },
+    {	"mtrace",	    DEBUG_TRACE,	  2	    },
+    {	"traceroute",	    DEBUG_TRACE,	  2	    },
+    {	"timeout",	    DEBUG_TIMEOUT,	  2	    },
+    {	"callout",	    DEBUG_TIMEOUT,	  3	    },
+    {	"packets",	    DEBUG_PKT,		  2	    },
+    {	"pkt",		    DEBUG_PKT,		  2	    },
+    {	"interfaces",	    DEBUG_IF,		  2	    },
+    {	"vif",		    DEBUG_IF,		  1	    },
+    {	"kernel",	    DEBUG_KERN,		  2	    },
+    {	"cache",	    DEBUG_MFC,		  1	    },
+    {	"mfc",		    DEBUG_MFC,		  2	    },
+    {	"k_cache",	    DEBUG_MFC,		  2	    },
+    {	"k_mfc",	    DEBUG_MFC,		  2	    },
+    {	"rsrr",		    DEBUG_RSRR,		  2	    },
+    {	"pim_detail",	    DEBUG_PIM_DETAIL,	  5	    },
+    {	"pim_hello",	    DEBUG_PIM_HELLO,	  5	    },
+    {	"pim_neighbors",    DEBUG_PIM_HELLO,	  5	    },
+    {	"pim_peers",	    DEBUG_PIM_HELLO,	  5	    },
+    {	"pim_register",	    DEBUG_PIM_REGISTER,	  5	    },
+    {	"registers",	    DEBUG_PIM_REGISTER,	  2	    },
+    {	"pim_join_prune",   DEBUG_PIM_JOIN_PRUNE, 5	    },
+    {	"pim_j_p",	    DEBUG_PIM_JOIN_PRUNE, 5	    },
+    {	"pim_jp",	    DEBUG_PIM_JOIN_PRUNE, 5	    },
+    {	"pim_bootstrap",    DEBUG_PIM_BOOTSTRAP,  5	    },
+    {	"pim_bsr",	    DEBUG_PIM_BOOTSTRAP,  5	    },
+    {	"bsr",		    DEBUG_PIM_BOOTSTRAP,  1	    },
+    {	"bootstrap",	    DEBUG_PIM_BOOTSTRAP,  1	    },
+    {	"pim_asserts",	    DEBUG_PIM_ASSERT,	  5	    },
+    {	"pim_cand_rp",	    DEBUG_PIM_CAND_RP,	  5	    },
+    {	"pim_c_rp",	    DEBUG_PIM_CAND_RP,	  5	    },
+    {	"pim_rp",	    DEBUG_PIM_CAND_RP,	  6	    },
+    {	"rp",		    DEBUG_PIM_CAND_RP,	  2	    },
+    {	"pim_routes",	    DEBUG_PIM_MRT,	  6	    },
+    {	"pim_routing",	    DEBUG_PIM_MRT,	  6	    },
+    {	"pim_mrt",	    DEBUG_PIM_MRT,	  5	    },
+    {	"pim_timers",	    DEBUG_PIM_TIMER,	  5	    },
+    {	"pim_rpf",	    DEBUG_PIM_RPF,	  6	    },
+    {	"rpf",		    DEBUG_RPF,		  3	    },
+    {	"pim",		    DEBUG_PIM,		  1	    },
+    {	"routes",	    DEBUG_MRT,		  1	    },
+    {	"routing",	    DEBUG_MRT,		  1	    },
+    {	"mrt",		    DEBUG_MRT,		  1	    },
+    {	"neighbors",	    DEBUG_NEIGHBORS,	  1	    },
+    {	"routers",	    DEBUG_NEIGHBORS,	  6	    },
+    {	"mrouters",	    DEBUG_NEIGHBORS,	  7	    },
+    {	"peers",	    DEBUG_NEIGHBORS,	  1	    },
+    {	"timers",	    DEBUG_TIMER,	  1	    },
+    {	"asserts",	    DEBUG_ASSERT,	  1	    },
+    {	"all",		    DEBUG_ALL,		  2	    },
+    {	"3",		    0xffffffff,		  1	    }	 /* compat. */
 };
+
 
 /*
  * Forward declarations.
  */
-static void handler     (int);
-static void timer        (void *);
+static void handler      (int);
+static void timer	 (void *);
 static void cleanup      (void);
 static void restart      (int);
 static void resetlogging (void *);
@@ -228,14 +221,15 @@ static pid_t daemon_pid(void)
 }
 
 /* Send signal to running daemon and the show resulting file. */
-static void killshow(int signo, char *file)
+static int killshow(int signo, char *file)
 {
     pid_t pid = daemon_pid();
     char buf[100];
 
     if (pid > 0) {
-	if (file)
-	    remove(file);
+	if (file && -1 == remove(file) && errno != ENOENT)
+	    warn("Failed removing %s, may be showing stale information", file);
+
 	kill(pid, signo);
 	if (file) {
 	    usleep(200);
@@ -245,11 +239,14 @@ static void killshow(int signo, char *file)
 	    }
 	}
     }
+
+    return 0;
 }
 
 static int usage(void)
 {
-    size_t i, j, k;
+    size_t i;
+    char line[76] = "  ";
     struct debugname *d;
 
     fprintf(stderr, "Usage: %s [-fhlNqrv] [-c FILE] [-d [LEVEL][,LEVEL...]]\n\n", __progname);
@@ -263,27 +260,65 @@ static int usage(void)
     /* fputs("  -p,--show-debug      Show debug dump, only if debug is enabled\n", stderr); */
     fputs("  -q, --quit-daemon    Send SIGTERM to a running pimd\n", stderr);
     fputs("  -r, --show-routes    Show state of VIFs and multicast routing tables\n", stderr);
+    fputs("  -t, --table-id=ID    Set multicast routing table ID.  Allowed values are:\n"
+	  "                       0 ... 999999999.  Default: 0 (use default table)\n", stderr);
+    fputs("  -s, --loglevel=LEVEL Maximum syslog level to use, default NOTICE, see below\n", stderr);
     fprintf(stderr, "  -v, --version        Show %s version\n", __progname);
     fputs("\n", stderr);
 
-    j = 0xffffffff;
-    k = 0;
-    fputs("Valid debug levels:\n  ", stderr);
+    /* From pimd v2.3.0 we show *all* the debug levels again */
+    fputs("Valid debug levels:\n", stderr);
     for (i = 0, d = debugnames; i < ARRAY_LEN(debugnames); i++, d++) {
-	if ((j & d->level) == d->level) {
-	    if (k++) {
-		if (!(k % 5))
-		    fputs("\n  ", stderr);
-		else
-		    fputs(", ", stderr);
-	    }
-	    fputs(d->name, stderr);
-	    j &= ~d->level;
+	if (strlen(line) + strlen(d->name) + 3 >= sizeof(line)) {
+	    /* Finish this line and send to console */
+	    strlcat(line, "\n", sizeof(line));
+	    fputs(line, stderr);
+
+	    /* Prepare for next line */
+	    strlcpy(line, "  ", sizeof(line));
 	}
+
+	strlcat(line, d->name, sizeof(line));
+
+	if (i + 1 < ARRAY_LEN(debugnames))
+	    strlcat(line, ", ", sizeof(line));
     }
-    fputc('\n', stderr);
+    /* Flush remaining line. */
+    strlcat(line, "\n", sizeof(line));
+    fputs(line, stderr);
+
+
+    fputs("\nValid system log levels:", stderr);
+    fputs("\n  1) alert    Action must be taken immediately", stderr);
+    fputs("\n  2) crit     Critical conditions", stderr);
+    fputs("\n  3) err      Error conditions", stderr);
+    fputs("\n  4) warning  Warning conditions", stderr);
+    fputs("\n  5) notice   Normal but significant condition (DEFAULT)", stderr);
+    fputs("\n  6) info     Informational", stderr);
+    fputs("\n  7) debug    Debug-level messages", stderr);
+    fputs("\n\n", stderr);
 
     return 1;
+}
+
+static int lvltonum(char *arg, const char **errstr)
+{
+    int i;
+    char *level[] = { "ENERG", "ALERT", "CRIT", "ERR", "WARNING", "NOTICE", "INFO", "DEBUG", NULL };
+
+    if (!strncmp(arg, "LOG_", 4))
+	arg += 4;
+
+    for (i = 0; level[i]; i++) {
+	if (!strncasecmp(arg, level[i], strlen(level[i]))) {
+	    *errstr = NULL;
+	    return i;
+	}
+    }
+
+    *errstr = "invalid";
+
+    return 5;
 }
 
 int main(int argc, char *argv[])
@@ -304,6 +339,9 @@ int main(int argc, char *argv[])
 	{"quit-daemon", 0, 0, 'q'},
 	{"reload-config", 0, 0, 'l'},
 	{"show-routes", 0, 0, 'r'},
+	{"table-id", 1, 0, 't'},
+	{"syslog-level", 1, 0, 's'},   /* Compat */
+	{"loglevel", 1, 0, 's'},
 	/* {"show-cache", 0, 0, 'i'}, */
 	/* {"show-debug", 0, 0, 'p'}, */
 	{0, 0, 0, 0}
@@ -311,10 +349,13 @@ int main(int argc, char *argv[])
 
     snprintf(versionstring, sizeof (versionstring), "pimd version %s", todaysversion);
 
-    while ((ch = getopt_long (argc, argv, "c:d::fhlNP::vqr", long_options, NULL)) != EOF) {
+    while ((ch = getopt_long(argc, argv, "c:d::fhlNvqrt:s:", long_options, NULL)) != EOF) {
+	const char *errstr;
+
 	switch (ch) {
 	    case 'c':
-		configfilename = optarg;
+		if (optarg)
+		    config_file = optarg;
 		break;
 
 	    case 'd':
@@ -332,9 +373,10 @@ int main(int argc, char *argv[])
 			if (q)
 			    *q++ = '\0';
 			len = strlen(p);
-			for (i = 0, d = debugnames; i < ARRAY_LEN(debugnames); i++, d++)
+			for (i = 0, d = debugnames; i < ARRAY_LEN(debugnames); i++, d++) {
 			    if (len >= d->nchars && strncmp(d->name, p, len) == 0)
 				break;
+			}
 
 			if (i == ARRAY_LEN(debugnames))
 			    return usage();
@@ -351,29 +393,11 @@ int main(int argc, char *argv[])
 
 	    case 'h':
 		return usage();
-
 	    case 'l':
-		killshow(SIGHUP, NULL);
-		return 0;
+		return killshow(SIGHUP, NULL);
 
 	    case 'N':
 		disable_all_by_default = 1;
-		break;
-
-	    case 'P':
-#ifdef SNMP
-		if (!optarg)
-		    dest_port = DEFAULT_PORT;
-		else {
-		    dest_port = strtonum(optarg, 1, 65535, &errstr);
-		    if (errstr) {
-			warnx("destination port %s", errstr);
-			dest_port = DEFAULT_PORT;
-		    }
-		}
-#else
-		warnx("SNMP support missing, please feel free to submit a patch.");
-#endif
 		break;
 
 	    case 'v':
@@ -381,20 +405,47 @@ int main(int argc, char *argv[])
 		return 0;
 
 	    case 'q':
-		killshow(SIGTERM, NULL);
-		return 0;
+		return killshow(SIGTERM, NULL);
 
 	    case 'r':
-		killshow(SIGUSR1, _PATH_PIMD_DUMP);
-		return 0;
+		return killshow(SIGUSR1, _PATH_PIMD_DUMP);
+
+	    case 's':
+		if (!optarg) {
+			fprintf(stderr, "Missing syslog level argument!\n");
+			return usage();
+		}
+
+		if (isdigit((int)optarg[0]))
+		    syslog_level = strtonum(optarg, LOG_ALERT, LOG_DEBUG, &errstr);
+		else
+		    syslog_level = lvltonum(optarg, &errstr);
+
+		if (errstr) {
+		    fprintf(stderr, "Syslog level %s is %s!\n", optarg, errstr);
+		    return usage();
+		}
+		break;
+
+	    case 't':
+		if (!optarg) {
+			fprintf(stderr, "Missing Table ID argument!\n");
+			return usage();
+		}
+
+		mrt_table_id = strtonum(optarg, 0, 999999999, &errstr);
+		if (errstr) {
+		    fprintf(stderr, "Table ID %s!\n", errstr);
+		    return usage();
+		}
+		break;
+
 #if 0 /* XXX: TODO */
 	    case 'i':
-		killshow(SIGUSR2, _PATH_PIMD_CACHE);
-		return 0;
+		return killshow(SIGUSR2, _PATH_PIMD_CACHE);
 
 	    case 'p':
-		killshow(SIGQUIT, NULL);
-		return 0;
+		return killshow(SIGQUIT, NULL);
 #endif
 	    default:
 		return usage();
@@ -402,16 +453,12 @@ int main(int argc, char *argv[])
     }
 
     argc -= optind;
-    argv += optind;
-
-    if (argc > 0) {
+    if (argc > 0)
 	return usage();
-    }
 
-    if (geteuid() != 0) {
-	fprintf(stderr, "%s: must be root\n", __progname);
-	exit(1);
-    }
+    if (geteuid() != 0)
+	errx(1, "Need root privileges to start.");
+
     setlinebuf(stderr);
 
     if (debug != 0) {
@@ -434,41 +481,36 @@ int main(int argc, char *argv[])
     /*
      * Create directory for runtime files
      */
-    mkdir(_PATH_PIMD_RUNDIR, 0755);
+    if (-1 == mkdir(_PATH_PIMD_RUNDIR, 0755) && errno != EEXIST)
+	err(1, "Failed creating %s directory for runtime files", _PATH_PIMD_RUNDIR);
 
     /*
      * Setup logging
      */
 #ifdef LOG_DAEMON
-    (void)openlog("pimd", LOG_PID, LOG_DAEMON);
-    (void)setlogmask(LOG_UPTO(LOG_NOTICE));
+    openlog("pimd", LOG_PID, LOG_DAEMON);
+    setlogmask(LOG_UPTO(syslog_level));
 #else
-    (void)openlog("pimd", LOG_PID);
+    openlog("pimd", LOG_PID);
 #endif /* LOG_DAEMON */
 
-    logit(LOG_DEBUG, 0, "%s starting", versionstring);
+    logit(LOG_NOTICE, 0, "%s starting ...", versionstring);
 
     do_randomize();
     time(&boottime);
 
-    /* Start up the log rate-limiter */
-    resetlogging(NULL);
-
     callout_init();
     init_igmp();
     init_pim();
-#ifdef HAVE_ROUTING_SOCKETS
-    init_routesock();
-#endif /* HAVE_ROUTING_SOCKETS */
+    init_routesock(); /* Both for Linux netlink and BSD routing socket */
     init_pim_mrt();
     init_timers();
 
+    /* Start up the log rate-limiter */
+    resetlogging(NULL);
+
     /* TODO: check the kernel DVMRP/MROUTED/PIM support version */
 
-#ifdef SNMP
-    if (i = snmp_init())
-	return i;
-#endif /* SNMP */
     init_vifs();
     init_rp_and_bsr();   /* Must be after init_vifs() */
 
@@ -508,14 +550,19 @@ int main(int argc, char *argv[])
 	haveterminal = 0;
 	if (fork())
 	    exit(0);
-	(void)close(0);
-	(void)close(1);
-	(void)close(2);
-	(void)open("/", 0);
-	(void)dup2(0, 1);
-	(void)dup2(0, 2);
+
+	close(STDIN_FILENO);
+	close(STDOUT_FILENO);
+	close(STDERR_FILENO);
+
+	n = open("/dev/null", O_RDWR, 0);
+	if (n >= 0) {
+	    dup2(n, STDIN_FILENO);
+	    dup2(n, STDOUT_FILENO);
+	    dup2(n, STDERR_FILENO);
+	}
 #ifdef SYSV
-	(void)setpgrp();
+	setpgrp();
 #else
 #ifdef TIOCNOTTY
 	n = open("/dev/tty", 2);
@@ -530,9 +577,8 @@ int main(int argc, char *argv[])
 #endif /* SYSV */
     } /* End of child process code */
 
-    if (pidfile(NULL)) {
+    if (pidfile(NULL))
 	warn("Cannot create pidfile");
-    }
 
     /*
      * Main receive loop.
@@ -549,25 +595,26 @@ int main(int argc, char *argv[])
 	else {
 	    timeout = &tv;
 	    timeout->tv_sec = secs;
-	   timeout->tv_usec = 0;
-        }
+	    timeout->tv_usec = 0;
+	}
 
-        if (boottime) {
-           time_t n;
+	if (boottime) {
+	    time_t n;
 
-           time(&n);
-           if (n > boottime + 15) {
-              struct rp_hold *rph = g_rp_hold;
+	    time(&n);
+	    if (n > boottime + 15) {
+		struct rp_hold *rph = g_rp_hold;
 
-              while(rph) {
-                 add_rp_grp_entry(&cand_rp_list, &grp_mask_list,
-                                  rph->address, 1, (u_int16)0xffffff, rph->group, rph->mask,
-                                  curr_bsr_hash_mask, curr_bsr_fragment_tag);
-                 rph = rph->next;
-              }
-              boottime = 0;
-           }
-        }
+		while(rph) {
+		    add_rp_grp_entry(&cand_rp_list, &grp_mask_list,
+				     rph->address, 1, (uint16_t)0xffffff,
+				     rph->group, rph->mask,
+				     curr_bsr_hash_mask, curr_bsr_fragment_tag);
+		    rph = rph->next;
+		}
+		boottime = 0;
+	    }
+	}
 
 	if (sighandled) {
 	    if (sighandled & GOT_SIGINT) {
@@ -658,7 +705,7 @@ int main(int argc, char *argv[])
 	} while (difftime.tv_sec > 0);
     } /* Main loop */
 
-    logit(LOG_NOTICE, 0, "%s exiting", versionstring);
+    logit(LOG_NOTICE, 0, "%s exiting.", versionstring);
     cleanup();
     exit(0);
 }
@@ -680,7 +727,7 @@ int main(int argc, char *argv[])
  * avoid unwanted synchronization with other routers.
  */
 
-u_long virtual_time = 0;
+uint32_t virtual_time = 0;
 
 /*
  * Timer routine. Performs all perodic functions:
@@ -689,9 +736,9 @@ u_long virtual_time = 0;
  */
 static void timer(void *i __attribute__((unused)))
 {
-    age_vifs();	        /* Timeout neighbors and groups         */
-    age_routes();  	/* Timeout routing entries              */
-    age_misc();         /* Timeout the rest (Cand-RP list, etc) */
+    age_vifs();		/* Timeout neighbors and groups         */
+    age_routes();	/* Timeout routing entries              */
+    age_misc();		/* Timeout the rest (Cand-RP list, etc) */
 
     virtual_time += TIMER_INTERVAL;
     timer_setTimer(TIMER_INTERVAL, timer, NULL);
@@ -735,6 +782,8 @@ static void handler(int sig)
     switch (sig) {
     case SIGALRM:
 	sighandled |= GOT_SIGALRM;
+	break;
+
     case SIGINT:
     case SIGTERM:
 	sighandled |= GOT_SIGINT;
@@ -761,24 +810,21 @@ static void handler(int sig)
  */
 static void restart(int i __attribute__((unused)))
 {
-#ifdef SNMP
-    int s;
-#endif /* SNMP */
-
-    logit(LOG_NOTICE, 0, "%s % restart", versionstring);
+    logit(LOG_NOTICE, 0, "%s restarting ...", versionstring);
 
     /*
      * reset all the entries
      */
     /* TODO: delete?
        free_all_routes();
-       */
+    */
     free_all_callouts();
     stop_all_vifs();
     k_stop_pim(igmp_socket);
     nhandlers = 0;
     close(igmp_socket);
     close(pim_socket);
+
     /*
      * When IOCTL_OK_ON_RAW_SOCKET is defined, 'udp_socket' is equal
      * 'to igmp_socket'. Therefore, 'udp_socket' should be closed only
@@ -787,9 +833,9 @@ static void restart(int i __attribute__((unused)))
 #ifndef IOCTL_OK_ON_RAW_SOCKET
     close(udp_socket);
 #endif
-#ifdef HAVE_ROUTING_SOCKETS
+
+    /* Both for Linux netlink and BSD routing socket */
     close(routing_socket);
-#endif /* HAVE_ROUTING_SOCKETS */
 
     /*
      * start processing again
@@ -797,14 +843,8 @@ static void restart(int i __attribute__((unused)))
 
     init_igmp();
     init_pim();
-#ifdef HAVE_ROUTING_SOCKETS
-    init_routesock();
-#endif /* HAVE_ROUTING_SOCKETS */
+    init_routesock(); /* Both for Linux netlink and BSD routing socket */
     init_pim_mrt();
-#ifdef SNMP
-    if ( s = snmp_init())
-	exit(s);
-#endif /* SNMP */
     init_vifs();
 
     /* schedule timer interrupts */
@@ -817,12 +857,15 @@ static void resetlogging(void *arg)
     int nxttime = 60;
     void *narg = NULL;
 
-    if (arg == NULL && log_nmsgs > LOG_MAX_MSGS) {
+    if (arg == NULL && log_nmsgs >= LOG_MAX_MSGS) {
 	nxttime = LOG_SHUT_UP;
 	narg = (void *)&log_nmsgs;	/* just need some valid void * */
 	syslog(LOG_WARNING, "logging too fast, shutting up for %d minutes",
 	       LOG_SHUT_UP / 60);
     } else {
+	if (arg != NULL) {
+	    syslog(LOG_NOTICE, "logging enabled again after rate limiting");
+	}
 	log_nmsgs = 0;
     }
 
