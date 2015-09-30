@@ -44,9 +44,9 @@
 #define PIM_CONSTANT            0
 #define PIMD_LEVEL (PIM_CONSTANT | PIMD_VERSION | (PIMD_SUBVERSION << 8))
 
-#define INADDR_ALL_PIM_ROUTERS  (u_int32)0xe000000D	     /* 224.0.0.13 */
+#define INADDR_ALL_PIM_ROUTERS  (uint32_t)0xe000000D	     /* 224.0.0.13 */
 #if !defined(INADDR_UNSPEC_GROUP)
-#define INADDR_UNSPEC_GROUP     (u_int32)0xe0000000	     /* 224.0.0.0 */
+#define INADDR_UNSPEC_GROUP     (uint32_t)0xe0000000	     /* 224.0.0.0 */
 #endif /* !defined(INADDR_UNSPEC_GROUP) */
 
 
@@ -59,19 +59,23 @@
 #define PIM_REGISTER_PROBE_TIME	          5 /* Used to send NULL_REGISTER */
 #define PIM_DATA_TIMEOUT                210
 
-#define PIM_TIMER_HELLO_PERIOD 	         30
+#define PIM_TIMER_HELLO_INTERVAL         30
 #define PIM_JOIN_PRUNE_PERIOD	         60
 #define PIM_JOIN_PRUNE_HOLDTIME        (3.5 * PIM_JOIN_PRUNE_PERIOD)
 #define PIM_RANDOM_DELAY_JOIN_TIMEOUT   4.5
 
+/* TODO: XXX: cannot be shorter than 10 seconds (not in the spec)
+ * MAX: Cisco max value (16383) for ip pim rp-candidate interval. */
+#define PIM_MIN_CAND_RP_ADV_PERIOD       10
 #define PIM_DEFAULT_CAND_RP_ADV_PERIOD   60
+#define PIM_MAX_CAND_RP_ADV_PERIOD       16383
 
 /* TODO: 60 is the original value. Temporarily set to 30 for debugging.
 #define PIM_BOOTSTRAP_PERIOD             60 */
 #define PIM_BOOTSTRAP_PERIOD             30
 
 #define PIM_BOOTSTRAP_TIMEOUT	       (2.5 * PIM_BOOTSTRAP_PERIOD + 10)
-#define PIM_TIMER_HELLO_HOLDTIME       (3.5 * PIM_TIMER_HELLO_PERIOD)
+#define PIM_TIMER_HELLO_HOLDTIME       (3.5 * PIM_TIMER_HELLO_INTERVAL)
 #define PIM_ASSERT_TIMEOUT              180
 
 /* Misc definitions */
@@ -81,7 +85,10 @@
 					     * pp.22 bottom of the spec.
 					     */
 #define PIM_MAX_CAND_RP_PRIORITY        255 /* 255 is the highest. */
+
 #define PIM_DEFAULT_BSR_PRIORITY          0 /* 0 is the lowest               */
+#define PIM_MAX_CAND_BSR_PRIORITY         PIM_MAX_CAND_RP_PRIORITY
+
 #define RP_DEFAULT_IPV4_HASHMASKLEN      30 /* the default group msklen used
 					     * by the hash function to 
 					     * calculate the group-to-RP
@@ -99,31 +106,29 @@
 #define PIM_GROUP_PREFIX_MIN_MASKLEN	  4 /* group prefix minimum length */
 
 /* Datarate related definitions */
-/* REG_RATE is used by the RP to switch to the shortest path instead of
- * decapsulating Registers.
- * DATA_RATE is the threshold for the last hop router to initiate
- * switching to the shortest path.
- */
-/* TODO: XXX: probably no need for two different intervals.
- */
-#define PIM_DEFAULT_REG_RATE            50000 /* max # of register bits/s   */
-#define PIM_DEFAULT_REG_RATE_INTERVAL      20 /* regrate probe interval     */
-#define PIM_DEFAULT_DATA_RATE           50000 /* max # of data bits/s       */
-#define PIM_DEFAULT_DATA_RATE_INTERVAL     20 /* datarate check interval    */
 
-#define DATA_RATE_CHECK_INTERVAL           20 /* Data rate check interval   */
-#define REG_RATE_CHECK_INTERVAL            20 /* PIM Reg. rate check interval*/
+/*
+ * This is the threshold for the last hop router, or the RP, to
+ * initiate switching to the shortest path tree.  Like Cisco we
+ * change to SPT on first packet to the (S,G), but only after
+ * 100 seconds (Xorp does this and Pavlin knows his PIM-SM-FU)
+ */
+#define SPT_THRESHOLD_DEFAULT_MODE        SPT_PACKETS
+#define SPT_THRESHOLD_DEFAULT_RATE        0
+#define SPT_THRESHOLD_DEFAULT_PACKETS     0
+#define SPT_THRESHOLD_MAX_PACKETS         0
+#define SPT_THRESHOLD_DEFAULT_INTERVAL    100
 
-#define UCAST_ROUTING_CHECK_INTERVAL       20 /* Unfortunately, if the unicast
-					       * routing changes, the kernel
-					       * or any of the existing
-					       * unicast routing daemons
-					       * don't send us a signal.
-					       * Have to ask periodically the
-					       * kernel for any route changes.
-					       * Default: every 20 seconds.
-					       * Sigh.
-					       */
+#define UCAST_ROUTING_CHECK_INTERVAL      20 /* Unfortunately, if the unicast
+                                              * routing changes, the kernel
+                                              * or any of the existing
+                                              * unicast routing daemons
+                                              * don't send us a signal.
+                                              * Have to ask periodically the
+                                              * kernel for any route changes.
+                                              * Default: every 20 seconds.
+                                              * Sigh.
+                                              */
 
 
 #define DEFAULT_PHY_RATE_LIMIT  0             /* default phyint rate limit  */
@@ -161,9 +166,9 @@
 
 /* Encoded-Unicast: 6 bytes long */
 typedef struct pim_encod_uni_addr_ {
-    u_int8      addr_family;
-    u_int8      encod_type;
-    u_int32     unicast_addr;        /* XXX: Note the 32-bit boundary
+    uint8_t      addr_family;
+    uint8_t      encod_type;
+    uint32_t     unicast_addr;        /* XXX: Note the 32-bit boundary
 				      * misalignment for  the unicast
 				      * address when placed in the
 				      * memory. Must read it byte-by-byte!
@@ -173,21 +178,24 @@ typedef struct pim_encod_uni_addr_ {
 
 /* Encoded-Group */
 typedef struct pim_encod_grp_addr_ {
-    u_int8      addr_family;
-    u_int8      encod_type;
-    u_int8      reserved;
-    u_int8      masklen;
-    u_int32     mcast_addr;
+    uint8_t      addr_family;
+    uint8_t      encod_type;
+    uint8_t      reserved;
+    uint8_t      masklen;
+    uint32_t     mcast_addr;
 } pim_encod_grp_addr_t;
+#define PIM_ENCODE_GRP_ADDR_LEN 8
 
 /* Encoded-Source */
 typedef struct pim_encod_src_addr_ {
-    u_int8      addr_family;
-    u_int8      encod_type;
-    u_int8      flags;
-    u_int8      masklen;
-    u_int32     src_addr;
+    uint8_t      addr_family;
+    uint8_t      encod_type;
+    uint8_t      flags;
+    uint8_t      masklen;
+    uint32_t     src_addr;
 } pim_encod_src_addr_t;
+#define PIM_ENCODE_SRC_ADDR_LEN 8
+
 #define USADDR_RP_BIT 0x1
 #define USADDR_WC_BIT 0x2
 #define USADDR_S_BIT  0x4
@@ -201,13 +209,13 @@ typedef struct pim pim_header_t;
 
 /* PIM Hello */
 typedef struct pim_hello_ {
-    u_int16     option_type;   /* Option type */
-    u_int16     option_length; /* Length of the Option Value field in bytes */
+    uint16_t     option_type;   /* Option type */
+    uint16_t     option_length; /* Length of the Option Value field in bytes */
 } pim_hello_t;
 
 /* PIM Register */
 typedef struct pim_register_ {
-    u_int32     reg_flags;
+    uint32_t     reg_flags;
 } pim_register_t;
 
 /* PIM Register-Stop */
@@ -219,15 +227,15 @@ typedef struct pim_register_stop_ {
 /* PIM Join/Prune: XXX: all 32-bit addresses misaligned! */
 typedef struct pim_jp_header_ {
     pim_encod_uni_addr_t encod_upstream_nbr;
-    u_int8     reserved;
-    u_int8     num_groups;
-    u_int16    holdtime;
+    uint8_t     reserved;
+    uint8_t     num_groups;
+    uint16_t    holdtime;
 } pim_jp_header_t;
 
 typedef struct pim_jp_encod_grp_ {
     pim_encod_grp_addr_t   encod_grp;
-    u_int16                number_join_src;
-    u_int16                number_prune_src;
+    uint16_t                number_join_src;
+    uint16_t                number_prune_src;
 } pim_jp_encod_grp_t;
 
 #define PIM_ACTION_NOTHING 0
@@ -290,19 +298,26 @@ typedef struct pim_jp_encod_grp_ {
 
 /* Vartious options from PIM messages definitions */
 /* PIM_HELLO definitions */
-#define PIM_MESSAGE_HELLO_HOLDTIME              1
-#define PIM_MESSAGE_HELLO_HOLDTIME_LENGTH       2
-#define PIM_MESSAGE_HELLO_HOLDTIME_FOREVER      0xffff
+#define PIM_HELLO_HOLDTIME              1
+#define PIM_HELLO_HOLDTIME_LEN          2
+#define PIM_HELLO_HOLDTIME_FOREVER      0xffff
+
+#define PIM_HELLO_DR_PRIO               19
+#define PIM_HELLO_DR_PRIO_LEN           4
+#define PIM_HELLO_DR_PRIO_DEFAULT       1
+
+#define PIM_HELLO_GENID                 20
+#define PIM_HELLO_GENID_LEN             4
 
 /* PIM_REGISTER definitions */
-#define PIM_MESSAGE_REGISTER_BORDER_BIT         0x80000000
-#define PIM_MESSAGE_REGISTER_NULL_REGISTER_BIT  0x40000000
+#define PIM_REGISTER_BORDER_BIT         0x80000000
+#define PIM_REGISTER_NULL_REGISTER_BIT  0x40000000
 
 
 #define MASK_TO_MASKLEN(mask, masklen)                           \
     do {                                                         \
-        register u_int32 tmp_mask = ntohl((mask));               \
-        register u_int8  tmp_masklen = sizeof((mask)) << 3;      \
+        uint32_t tmp_mask = ntohl((mask));                        \
+        uint8_t  tmp_masklen = sizeof((mask)) << 3;               \
         for ( ; tmp_masklen > 0; tmp_masklen--, tmp_mask >>= 1)  \
             if (tmp_mask & 0x1)                                  \
                 break;                                           \
@@ -318,7 +333,7 @@ do {                                                                         \
 /*
  * A bunch of macros because of the lack of 32-bit boundary alignment.
  * All because of one misalligned address format. Hopefully this will be
- * fixed in PIMv3. (cp) must be (u_int8 *) .
+ * fixed in PIMv3. (cp) must be (uint8_t *) .
  */
 /* Originates from Eddy Rusty's (eddy@isi.edu) PIM-SM implementation for
  * gated.
@@ -347,11 +362,11 @@ do {                                                                         \
  * The same for all {PUT,GET}_{NET,HOST}{SHORT,LONG}
  */
 #define GET_BYTE(val, cp)       ((val) = *(cp)++)
-#define PUT_BYTE(val, cp)       (*(cp)++ = (u_int8)(val))
+#define PUT_BYTE(val, cp)       (*(cp)++ = (uint8_t)(val))
 
 #define GET_HOSTSHORT(val, cp)                  \
         do {                                    \
-                register u_int16 Xv;            \
+                uint16_t Xv;                    \
                 Xv = (*(cp)++) << 8;            \
                 Xv |= *(cp)++;                  \
                 (val) = Xv;                     \
@@ -359,26 +374,26 @@ do {                                                                         \
 
 #define PUT_HOSTSHORT(val, cp)                  \
         do {                                    \
-                register u_int16 Xv;            \
-                Xv = (u_int16)(val);            \
-                *(cp)++ = (u_int8)(Xv >> 8);    \
-                *(cp)++ = (u_int8)Xv;           \
+                uint16_t Xv;                    \
+                Xv = (uint16_t)(val);            \
+                *(cp)++ = (uint8_t)(Xv >> 8);   \
+                *(cp)++ = (uint8_t)Xv;          \
         } while (0)
 
 #if defined(BYTE_ORDER) && (BYTE_ORDER == LITTLE_ENDIAN)
 #define GET_NETSHORT(val, cp)                   \
         do {                                    \
-                register u_int16 Xv;            \
+                uint16_t Xv;                    \
                 Xv = *(cp)++;                   \
                 Xv |= (*(cp)++) << 8;           \
                 (val) = Xv;                     \
         } while (0)
 #define PUT_NETSHORT(val, cp)                   \
         do {                                    \
-                register u_int16 Xv;            \
-                Xv = (u_int16)(val);            \
-                *(cp)++ = (u_int8)Xv;           \
-                *(cp)++ = (u_int8)(Xv >> 8);    \
+                uint16_t Xv;                    \
+                Xv = (uint16_t)(val);            \
+                *(cp)++ = (uint8_t)Xv;          \
+                *(cp)++ = (uint8_t)(Xv >> 8);   \
         } while (0)
 #else
 #define GET_NETSHORT(val, cp) GET_HOSTSHORT(val, cp)
@@ -387,7 +402,7 @@ do {                                                                         \
 
 #define GET_HOSTLONG(val, cp)                   \
         do {                                    \
-                register u_long Xv;             \
+                uint32_t Xv;                    \
                 Xv  = (*(cp)++) << 24;          \
                 Xv |= (*(cp)++) << 16;          \
                 Xv |= (*(cp)++) <<  8;          \
@@ -397,18 +412,18 @@ do {                                                                         \
 
 #define PUT_HOSTLONG(val, cp)                   \
         do {                                    \
-                register u_int32 Xv;            \
-                Xv = (u_int32)(val);            \
-                *(cp)++ = (u_int8)(Xv >> 24);   \
-                *(cp)++ = (u_int8)(Xv >> 16);   \
-                *(cp)++ = (u_int8)(Xv >>  8);   \
-                *(cp)++ = (u_int8)Xv;           \
+                uint32_t Xv;                     \
+                Xv = (uint32_t)(val);            \
+                *(cp)++ = (uint8_t)(Xv >> 24);  \
+                *(cp)++ = (uint8_t)(Xv >> 16);  \
+                *(cp)++ = (uint8_t)(Xv >>  8);  \
+                *(cp)++ = (uint8_t)Xv;          \
         } while (0)
 
 #if defined(BYTE_ORDER) && (BYTE_ORDER == LITTLE_ENDIAN)
 #define GET_NETLONG(val, cp)                    \
         do {                                    \
-                register u_long Xv;             \
+                uint32_t Xv;                    \
                 Xv  = *(cp)++;                  \
                 Xv |= (*(cp)++) <<  8;          \
                 Xv |= (*(cp)++) << 16;          \
@@ -418,12 +433,12 @@ do {                                                                         \
 
 #define PUT_NETLONG(val, cp)                    \
         do {                                    \
-                register u_int32 Xv;            \
-                Xv = (u_int32)(val);            \
-                *(cp)++ = (u_int8)Xv;           \
-                *(cp)++ = (u_int8)(Xv >>  8);   \
-                *(cp)++ = (u_int8)(Xv >> 16);   \
-                *(cp)++ = (u_int8)(Xv >> 24);   \
+                uint32_t Xv;                    \
+                Xv = (uint32_t)(val);            \
+                *(cp)++ = (uint8_t)Xv;          \
+                *(cp)++ = (uint8_t)(Xv >>  8);  \
+                *(cp)++ = (uint8_t)(Xv >> 16);  \
+                *(cp)++ = (uint8_t)(Xv >> 24);  \
         } while (0)
 #else
 #define GET_NETLONG(val, cp) GET_HOSTLONG(val, cp)
@@ -442,7 +457,7 @@ do {                                                                         \
 
 #define PUT_ESADDR(addr, masklen, flags, cp)    \
         do {                                    \
-            u_int32 mask;                       \
+            uint32_t mask;                      \
             MASKLEN_TO_MASK((masklen), mask);   \
             *(cp)++ = ADDRF_IPv4; /* family */  \
             *(cp)++ = ADDRT_IPv4; /* type   */  \
@@ -462,7 +477,7 @@ do {                                                                         \
 
 #define PUT_EGADDR(addr, masklen, reserved, cp) \
         do {                                    \
-            u_int32 mask;                       \
+            uint32_t mask;                      \
             MASKLEN_TO_MASK((masklen), mask);   \
             *(cp)++ = ADDRF_IPv4; /* family */  \
             *(cp)++ = ADDRT_IPv4; /* type   */  \
@@ -485,7 +500,12 @@ do {                                                                         \
             PUT_NETLONG((addr), (cp));          \
         } while(0)
 
+/* Check if group is in PIM-SSM range, x must be in network byte order */
+#define IN_PIM_SSM_RANGE(x) ((ntohl((unsigned)(x)) & 0xff000000) == 0xe8000000)
 
+/* Check if address is in link-local range, x must be in network byte order */
+#define IN_LINK_LOCAL_RANGE(x) ((ntohl((unsigned)(x)) & 0xffff0000) == 0xa9fe0000)
+ 
 /* TODO: Currently not used. Probably not need at all. Delete! */
 #if 0
 /* This is completely IGMP related stuff? */
@@ -502,15 +522,15 @@ do {                                                                         \
  * note the convenient similarity to an IP packet
  */ 
 struct igmpmsg {
-    u_long          unused1;
-    u_long          unused2;
-    u_char          im_msgtype;                 /* what type of message     */
+    uint32_t        unused1;
+    uint32_t        unused2;
+    uint8_t         im_msgtype;                 /* what type of message     */
 #define IGMPMSG_NOCACHE         1
 #define IGMPMSG_WRONGVIF        2
 #define IGMPMSG_WHOLEPKT        3               /* used for user level encap*/
-    u_char          im_mbz;                     /* must be zero             */
-    u_char          im_vif;                     /* vif rec'd on             */
-    u_char          unused3;
+    uint8_t         im_mbz;                     /* must be zero             */
+    uint8_t         im_vif;                     /* vif rec'd on             */
+    uint8_t         unused3;
     struct in_addr  im_src, im_dst;
 };
 #endif
