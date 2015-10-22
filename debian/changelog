@@ -1,3 +1,26 @@
+pimd (2.3.0-0.1) unstable; urgency=medium
+
+  * Non-maintainer upload
+  * New upstream release (closes: #788744, #719555)
+  * Packaging overhaul
+    + Set package format to 3.0 (quilt) (closes: #725554)
+    + Bump compat to 9
+    + Bump standards to 3.9.6, no changes needed
+    + Use the dh sequencer
+    + gbp: filter out upstream's debian/
+    + d/control: move Homepage to the Source stanza (lintian)
+  * Adjust upstream doc names
+  * Drop d/addons/pimd.conf, it uses the old syntax. Ship upstream's config
+    instead.
+  * Initscript overhaul
+    + Use init-d-script to implement an LSB- and Debian-compatible initscript.
+    + Add support for configuration reload.
+    + Fill in the (short) description (lintian)
+  * Add systemd unit
+  * Add d/watch
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Thu, 22 Oct 2015 15:36:55 +0300
+
 pimd (2.1.8-2) unstable; urgency=low
 
   * use dpkg-buildflags for build flags (CFLAGS, LDFLAGS, CPPFLAGS),
